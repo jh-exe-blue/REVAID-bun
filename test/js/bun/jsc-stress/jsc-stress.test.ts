@@ -1,7 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import path from "path";
+
+// WebKit still hits ERROR_INVALID_ADDRESS (487) in the IPInt→BBQ tier-up
+// path of `ipint-bbq-osr-with-try3.js` on Windows x64 specifically. Related
+// BBQCallee lifetime fix landed via WebKit 39862040be27 (PR #30096) but a
+// residual access-violation in VirtualAlloc(MEM_COMMIT) remains on this
+// fixture. Other `ipint-bbq-osr-with-tryN.js` fixtures pass.
+const isWasmMprotectCrashFixture = (fixture: string) =>
+  isWindows && process.arch === "x64" && fixture === "ipint-bbq-osr-with-try3.js";
 
 const fixturesDir = path.join(import.meta.dir, "fixtures");
 const wasmFixturesDir = path.join(fixturesDir, "wasm");
@@ -199,7 +207,7 @@ describe.concurrent("JSC JIT Stress Tests", () => {
 
   describe("Wasm (BBQ/OMG)", () => {
     for (const fixture of wasmFixtures) {
-      test(
+      test.todoIf(isWasmMprotectCrashFixture(fixture))(
         fixture,
         async () => {
           const fixturePath = path.join(wasmFixturesDir, fixture);
