@@ -506,7 +506,6 @@ it(
 
 const comment_line = "//" + Buffer.alloc(2000, "B").toString() + "\n";
 const comment_spam = Buffer.alloc(comment_line.length * 1000, comment_line).toString();
-
 // writeFileSync of a ~2MB file is non-atomic (truncate + N×write); each write
 // emits a watcher event so --hot can re-read mid-write (Linux: EBADF /
 // "Unexpected ..." / :1:12 mis-remap; Windows: ReadDirectoryChangesW
