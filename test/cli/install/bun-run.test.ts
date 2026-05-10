@@ -329,6 +329,70 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/30456
+  it("--cwd updates process.env.PWD to match the new cwd", async () => {
+    using dir = tempDir("bun-run-cwd-pwd", {
+      "subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cwd=subdir", "test.js"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        // Set a known PWD so we detect when it's not overwritten — don't
+        // rely on the inherited parent PWD (Bun's test harness can leave
+        // it pointing at an unexpected directory on some platforms).
+        PWD: String(dir),
+      },
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const { pwd, cwd } = JSON.parse(stdout);
+    // realpath-resolved subdir under the tempdir, since macOS tempdirs
+    // symlink through /private.
+    expect(cwd).toMatch(/subdir$/);
+    // PWD must match cwd — tools like vue-tsc / TypeScript's module
+    // resolution read PWD and use it as the resolution root.
+    expect(pwd).toBe(cwd);
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/bun/issues/30456
+  it("--cwd PWD is inherited by spawned child processes", async () => {
+    using dir = tempDir("bun-run-cwd-pwd-child", {
+      "subdir/test.js": `
+        const { spawnSync } = require("child_process");
+        const out = spawnSync(process.execPath, ["-e", "console.log(process.env.PWD)"], {
+          env: process.env,
+          encoding: "utf8",
+        });
+        process.stdout.write(out.stdout);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cwd=subdir", "test.js"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        PWD: String(dir),
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toMatch(/subdir$/);
+    expect(exitCode).toBe(0);
+  });
+
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {
       "index.ts": `

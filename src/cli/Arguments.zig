@@ -463,7 +463,14 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
                 Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                 Global.exit(1);
             };
-            break :brk try allocator.dupeZ(u8, out);
+            const cwd_z = try allocator.dupeZ(u8, out);
+            // Keep `PWD` in sync with the new cwd so tools that read
+            // `process.env.PWD` (TypeScript / vue-tsc for module resolution,
+            // shell scripts, subprocess children, etc.) see the directory
+            // we just chdir'd into instead of the inherited parent. This
+            // must run before `DotEnv.loadProcess` snapshots `environ`.
+            setPwdEnv(cwd_z);
+            break :brk cwd_z;
         };
     } else {
         cwd = try bun.getcwdAlloc(allocator);
@@ -1713,6 +1720,26 @@ export var Bun__Node__ProcessThrowDeprecation = false;
 pub const BunCAStore = enum(u8) { bundled, openssl, system };
 pub export var Bun__Node__CAStore: BunCAStore = .bundled;
 pub export var Bun__Node__UseSystemCA = false;
+
+/// Publish `cwd` as the `PWD` environment variable. Used after `--cwd`
+/// successfully chdir's so that `process.env.PWD` and spawned children see
+/// the new directory. bash's builtin `cd` does the same — only on success.
+///
+/// Overwriting an existing env var keeps the `std.os.environ[i]` pointers
+/// stable on glibc/darwin (the specific entry's pointer is replaced in
+/// place inside the existing `environ` array), so subsequent
+/// `DotEnv.loadProcess()` iteration observes the new value.
+fn setPwdEnv(cwd: [:0]const u8) void {
+    if (comptime Environment.isWindows) {
+        var wbuf: bun.WPathBuffer = undefined;
+        const wcwd = bun.strings.toWPath(&wbuf, cwd);
+        _ = bun.c.SetEnvironmentVariableW(bun.strings.w("PWD"), wcwd.ptr);
+    } else {
+        _ = setenv("PWD", cwd.ptr, 1);
+    }
+}
+
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
 
 const string = []const u8;
 
