@@ -337,8 +337,7 @@ describe.concurrent("bun run", () => {
   // Arguments.parse branch.
   for (const withRun of [false, true]) {
     const label = withRun ? "bun --cwd run" : "bun --cwd";
-    const buildCmd = (...extra: string[]) =>
-      [bunExe(), "--cwd=subdir", ...(withRun ? ["run"] : []), ...extra];
+    const buildCmd = (...extra: string[]) => [bunExe(), "--cwd=subdir", ...(withRun ? ["run"] : []), ...extra];
 
     it(`${label} updates process.env.PWD to match the new cwd`, async () => {
       using dir = tempDir(`bun-run-cwd-pwd-${withRun ? "run" : "bare"}`, {
