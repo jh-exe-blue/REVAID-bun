@@ -1741,8 +1741,7 @@ fn setPwdEnv(allocator: std.mem.Allocator, cwd: [:0]const u8) OOM!void {
     const entry_ptr: [*:0]u8 = entry.ptr;
 
     for (std.os.environ) |*slot| {
-        const slice = std.mem.span(slot.*);
-        if (slice.len >= 4 and std.mem.startsWith(u8, slice, "PWD=")) {
+        if (strings.hasPrefixComptime(std.mem.span(slot.*), "PWD=")) {
             slot.* = entry_ptr;
             break;
         }
