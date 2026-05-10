@@ -335,11 +335,18 @@ describe.concurrent("bun run", () => {
   // bare-entrypoint form (`bun --cwd=subdir test.js`) and the `run`
   // subcommand form (`bun --cwd=subdir run test.js`) — each hits a different
   // Arguments.parse branch.
+  //
+  // `PWD` is a POSIX shell convention — these tests exist for the tools that
+  // read it (vue-tsc via TypeScript's module resolution, shell scripts,
+  // subprocess children). On Windows the path / env conventions differ enough
+  // (case-insensitive keys, backslash vs forward-slash in `process.cwd()` vs
+  // the `.loose`-normalised path we store, `%CD%` as the native equivalent)
+  // that a strict equality test would produce false failures; skip there.
   for (const withRun of [false, true]) {
     const label = withRun ? "bun --cwd run" : "bun --cwd";
     const buildCmd = (...extra: string[]) => [bunExe(), "--cwd=subdir", ...(withRun ? ["run"] : []), ...extra];
 
-    it(`${label} updates process.env.PWD to match the new cwd`, async () => {
+    it.skipIf(isWindows)(`${label} updates process.env.PWD to match the new cwd`, async () => {
       using dir = tempDir(`bun-run-cwd-pwd-${withRun ? "run" : "bare"}`, {
         "subdir/test.js": `console.log(JSON.stringify({ pwd: process.env.PWD, cwd: process.cwd() }));`,
       });
@@ -371,7 +378,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it(`${label} PWD is inherited by spawned child processes`, async () => {
+    it.skipIf(isWindows)(`${label} PWD is inherited by spawned child processes`, async () => {
       using dir = tempDir(`bun-run-cwd-pwd-child-${withRun ? "run" : "bare"}`, {
         "subdir/test.js": `
           import { spawnSync } from "child_process";
@@ -405,7 +412,7 @@ describe.concurrent("bun run", () => {
     // minimal Docker), libc's setenv reallocates the environ array and the
     // naive `std.os.environ` snapshot misses the addition. Make sure --cwd
     // still publishes PWD through to `process.env` in that case.
-    it(`${label} adds PWD when parent had none`, async () => {
+    it.skipIf(isWindows)(`${label} adds PWD when parent had none`, async () => {
       using dir = tempDir(`bun-run-cwd-pwd-unset-${withRun ? "run" : "bare"}`, {
         "subdir/test.js": `console.log(process.env.PWD ?? "<unset>");`,
       });
