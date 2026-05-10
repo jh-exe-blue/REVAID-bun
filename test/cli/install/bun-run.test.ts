@@ -393,6 +393,33 @@ describe.concurrent("bun run", () => {
     expect(exitCode).toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/30456
+  // When PWD is absent from the inherited env (env -u PWD, cron, systemd,
+  // minimal Docker), libc's setenv reallocates the environ array and the
+  // naive `std.os.environ` snapshot misses the addition. Make sure --cwd
+  // still publishes PWD through to `process.env` in that case.
+  it("--cwd adds PWD when parent had none", async () => {
+    using dir = tempDir("bun-run-cwd-pwd-unset", {
+      "subdir/test.js": `console.log(process.env.PWD ?? "<unset>");`,
+    });
+
+    const { PWD, ...envNoPwd } = bunEnv;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cwd=subdir", "test.js"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: envNoPwd,
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toMatch(/subdir$/);
+    expect(exitCode).toBe(0);
+  });
+
   it("DCE annotations are respected", async () => {
     using dir = tempDir("test", {
       "index.ts": `

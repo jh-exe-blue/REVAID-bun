@@ -467,9 +467,8 @@ pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: C
             // Keep `PWD` in sync with the new cwd so tools that read
             // `process.env.PWD` (TypeScript / vue-tsc for module resolution,
             // shell scripts, subprocess children, etc.) see the directory
-            // we just chdir'd into instead of the inherited parent. This
-            // must run before `DotEnv.loadProcess` snapshots `environ`.
-            setPwdEnv(cwd_z);
+            // we just chdir'd into instead of the inherited parent.
+            try setPwdEnv(allocator, cwd_z);
             break :brk cwd_z;
         };
     } else {
@@ -1725,11 +1724,37 @@ pub export var Bun__Node__UseSystemCA = false;
 /// successfully chdir's so that `process.env.PWD` and spawned children see
 /// the new directory. bash's builtin `cd` does the same — only on success.
 ///
-/// Overwriting an existing env var keeps the `std.os.environ[i]` pointers
-/// stable on glibc/darwin (the specific entry's pointer is replaced in
-/// place inside the existing `environ` array), so subsequent
-/// `DotEnv.loadProcess()` iteration observes the new value.
-fn setPwdEnv(cwd: [:0]const u8) void {
+/// Two writes are needed, unfortunately:
+///   1. `std.os.environ` — read by `DotEnv.loadProcess()` to populate
+///      `process.env`. On Windows this is a WTF-8 snapshot taken at
+///      startup (`src/sys/windows/env.zig`); on POSIX without a
+///      pre-existing `PWD` (cron, systemd, `env -u PWD`, minimal Docker
+///      images), `setenv` reallocates the libc `environ` array and
+///      `std.os.environ` is left pointing at the old copy. Either way,
+///      the OS-level setenv below isn't enough on its own — we have to
+///      mutate the Zig slice too.
+///   2. `setenv` / `SetEnvironmentVariableW` — so `Bun.spawn`-style
+///      child processes inherit the updated `PWD` via the OS-level env
+///      block.
+fn setPwdEnv(allocator: std.mem.Allocator, cwd: [:0]const u8) OOM!void {
+    const entry = try std.fmt.allocPrintSentinel(allocator, "PWD={s}", .{cwd}, 0);
+    const entry_ptr: [*:0]u8 = entry.ptr;
+
+    for (std.os.environ) |*slot| {
+        const slice = std.mem.span(slot.*);
+        if (slice.len >= 4 and std.mem.startsWith(u8, slice, "PWD=")) {
+            slot.* = entry_ptr;
+            break;
+        }
+    } else {
+        // No existing PWD entry — grow `std.os.environ` by one.
+        const old = std.os.environ;
+        const new = try allocator.alloc([*:0]u8, old.len + 1);
+        @memcpy(new[0..old.len], old);
+        new[old.len] = entry_ptr;
+        std.os.environ = new;
+    }
+
     if (comptime Environment.isWindows) {
         var wbuf: bun.WPathBuffer = undefined;
         const wcwd = bun.strings.toWPath(&wbuf, cwd);
