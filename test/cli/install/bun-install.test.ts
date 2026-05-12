@@ -609,10 +609,9 @@ describe.concurrent("bun-install", () => {
       const urls: string[] = [];
       setContextHandler(ctx, async request => {
         expect(request.method).toBe("GET");
-        expect([
+        expect(request.headers.get("accept")).toBe(
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-          "application/json, */*",
-        ]).toContain(request.headers.get("accept"));
+        );
         expect(request.headers.get("npm-auth-type")).toBe(null);
         expect(await request.text()).toBeEmpty();
         urls.push(request.url);
@@ -648,10 +647,9 @@ describe.concurrent("bun-install", () => {
       const urls: string[] = [];
       setContextHandler(ctx, async request => {
         expect(request.method).toBe("GET");
-        expect([
+        expect(request.headers.get("accept")).toBe(
           "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-          "application/json, */*",
-        ]).toContain(request.headers.get("accept"));
+        );
         if (request.url === url) {
           expect(request.headers.get("authorization")).toBe("Bearer bar");
           expect(request.headers.get("npm-auth-type")).toBe("legacy");
@@ -9015,7 +9013,7 @@ describe.concurrent("bun-install", () => {
       expect(await file(join(ctx.package_dir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
         "lockfileVersion": 1,
-        "configVersion": 2,
+        "configVersion": 1,
         "workspaces": {
           "": {
             "name": "foo",
