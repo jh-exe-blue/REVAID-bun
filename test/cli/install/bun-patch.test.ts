@@ -1,5 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, rmSync, watch } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -816,4 +817,103 @@ module.exports = function isOdd() {
       expect(stdout.toString()).toBe("true\n");
     }
   });
+
+  // Regression for https://github.com/oven-sh/bun/issues/30554 (dup of #12200).
+  //
+  // On Windows, when the project is on one drive (e.g. Z:\) and the install
+  // cache is on another (C:\), `bun patch --commit` failed with:
+  //   error: failed renaming patch file to patches dir
+  //   EPERM: Operation not permitted (copyfile())
+  // because the patch file was staged in the cache-drive tempdir and the
+  // subsequent rename across drives fell back to CopyFileW while a writable
+  // handle was still open on the source.
+  //
+  // The Windows EPERM can't be directly reproduced on Linux, but the root
+  // cause is visible: before the fix, `bun patch --commit` wrote its
+  // staging `.tmp` file into the install cache's tempdir. After the fix,
+  // staging happens inside `patches/` itself so the rename is always
+  // same-filesystem. This test watches the tempdir and asserts nothing
+  // lands there during the commit.
+  test.skipIf(process.platform === "win32")(
+    "patch --commit stages patch file inside patches dir, not the cache tempdir",
+    async () => {
+      const cacheDir = tempDirWithFiles("bun-patch-xdev-cache", {});
+      const tmpDir = tempDirWithFiles("bun-patch-xdev-tmp", {});
+      try {
+        const filedir = tempDirWithFiles("bun-patch-xdev-project", {
+          "package.json": JSON.stringify({
+            "name": "bun-patch-xdev-test",
+            "module": "index.ts",
+            "type": "module",
+            "dependencies": { "is-even": "1.0.0" },
+          }),
+          "index.ts": `import isEven from 'is-even'; console.log(isEven(420));`,
+        });
+
+        const env = {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: String(cacheDir),
+          BUN_TMPDIR: String(tmpDir),
+        };
+
+        await $`${bunExe()} install --linker hoisted`.env(env).cwd(filedir);
+        await $`${bunExe()} patch is-even@1.0.0 --linker hoisted`.env(env).cwd(filedir);
+
+        await Bun.write(
+          join(filedir, "node_modules/is-even/index.js"),
+          "module.exports = function () { return 'patched'; };\n",
+        );
+
+        // Watch the cache-side tempdir during commit. Pre-fix, the
+        // commit wrote a `.<hex>-<hex>.tmp` file here and then renamed
+        // it across filesystems into patches/. Post-fix, nothing
+        // belonging to the commit touches this directory.
+        const touchedTmpFiles: string[] = [];
+        const watcher = watch(String(tmpDir), (_eventType, filename) => {
+          if (filename && filename.endsWith(".tmp")) {
+            touchedTmpFiles.push(filename);
+          }
+        });
+
+        try {
+          const commit = await $`${bunExe()} patch --commit node_modules/is-even --linker hoisted`
+            .env(env)
+            .cwd(filedir)
+            .throws(false);
+          expect(commit.stderr.toString()).not.toContain("error");
+          // The specific failure reported on Windows when the stage dir
+          // is on a different filesystem than patches/.
+          expect(commit.stderr.toString()).not.toContain("failed renaming patch file to patches dir");
+          expect(commit.stderr.toString()).not.toContain("EPERM");
+          expect(commit.exitCode).toBe(0);
+        } finally {
+          watcher.close();
+        }
+
+        // Drain any trailing fs events before asserting.
+        await new Promise<void>(r => setImmediate(r));
+
+        // The reinstall step (patch_install.zig) unavoidably creates ONE
+        // temp directory in the cache tempdir for extracting the patched
+        // tarball — that appears as create + delete events for the SAME
+        // name. The commit-staging file — which is what the fix moved —
+        // would show up as a SECOND distinct name. Collapse by unique
+        // name so we catch just the staging file, which is the bug.
+        const uniqueTmpNames = [...new Set(touchedTmpFiles)];
+        expect(uniqueTmpNames.length).toBeLessThanOrEqual(1);
+
+        const patchPath = join(filedir, "patches", "is-even@1.0.0.patch");
+        expect(existsSync(patchPath)).toBe(true);
+        const patchContents = await Bun.file(patchPath).text();
+        expect(patchContents).toContain("diff --git");
+        expect(patchContents).toContain("patched");
+
+        const { stdout } = await $`${bunExe()} run index.ts`.env(env).cwd(filedir);
+        expect(stdout.toString().trim()).toBe("patched");
+      } finally {
+        rmSync(String(cacheDir), { recursive: true, force: true });
+        rmSync(String(tmpDir), { recursive: true, force: true });
+      }
+    },
+  );
 });
