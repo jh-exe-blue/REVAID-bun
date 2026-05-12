@@ -471,15 +471,20 @@ pub fn doPatchCommit(
         }
     }
 
-    // rename within the patches dir — same directory, same filesystem.
+    // rename within the patches dir — same directory, same filesystem. Use
+    // plain renameat (which atomically replaces an existing target on POSIX
+    // and Windows) rather than renameatConcurrently: when the target patch
+    // file already exists (re-commit of an existing patch), the concurrent
+    // path falls through to RENAME_EXCHANGE on Linux/macOS and swaps rather
+    // than replaces, leaving the *previous* patch's bytes as a stray
+    // `.<hex>-<hex>.tmp` in the user's patches/ dir.
     var patch_filename_z_buf: bun.PathBuffer = undefined;
     const patch_filename_z = bun.path.z(patch_filename, &patch_filename_z_buf);
-    if (bun.sys.renameatConcurrently(
+    if (bun.sys.renameat(
         patches_dir_fd,
         tempfile_name,
         patches_dir_fd,
         patch_filename_z,
-        .{},
     ).asErr()) |e| {
         _ = bun.sys.unlinkat(patches_dir_fd, tempfile_name);
         Output.err(e, "failed renaming patch file to patches dir", .{});
