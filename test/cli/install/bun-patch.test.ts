@@ -915,10 +915,7 @@ module.exports = function isOdd() {
 
     await $`${bunExe()} install --linker hoisted`.env(bunEnv).cwd(filedir);
     await $`${bunExe()} patch is-even@1.0.0 --linker hoisted`.env(bunEnv).cwd(filedir);
-    await Bun.write(
-      join(filedir, "node_modules/is-even/index.js"),
-      "module.exports = function () { return 'v1'; };\n",
-    );
+    await Bun.write(join(filedir, "node_modules/is-even/index.js"), "module.exports = function () { return 'v1'; };\n");
     await $`${bunExe()} patch --commit node_modules/is-even --linker hoisted`.env(bunEnv).cwd(filedir);
 
     // Re-patch with different content so the commit target already exists.
