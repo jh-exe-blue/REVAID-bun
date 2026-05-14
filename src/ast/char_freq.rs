@@ -183,13 +183,25 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
+    // PORT NOTE: CharFreq.zig:86 historically had an off-by-one for digits,
+    // `c + (53 - '0')`, putting '0'..'9' at slots 53..62 and colliding '9'
+    // with '_' at 62. `scan_big` already used the correct 52..61 layout, so
+    // the two scan paths disagreed on identical input. Fixed here to match
+    // `scan_big` and NameMinifier::DEFAULT_TAIL.
     let mut freqs: [i32; CHAR_FREQ_COUNT] = *out;
 
     for &c in text {
+        // Slots match NameMinifier::DEFAULT_TAIL:
+        //   0..26  = 'a'..'z'
+        //   26..52 = 'A'..'Z'
+        //   52..62 = '0'..'9'
+        //   62     = '_'
+        //   63     = '$'
+        // scan_big uses the same layout; keep these in sync.
         let i: usize = match c {
             b'a'..=b'z' => c as usize - b'a' as usize,
             b'A'..=b'Z' => c as usize - (b'A' as usize - 26),
-            b'0'..=b'9' => c as usize + (53 - b'0' as usize),
+            b'0'..=b'9' => c as usize + (52 - b'0' as usize),
             b'_' => 62,
             b'$' => 63,
             _ => continue,
