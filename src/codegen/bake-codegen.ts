@@ -53,7 +53,13 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          // `define` values are JS expressions, not strings. A raw CSS
+          // blob is not a valid expression; the Rust-rewrite's stricter
+          // JSON parser now rejects it outright. Wrap so the bundler
+          // sees a proper string literal. (Pre-1.3.14 bun silently
+          // wrapped, which is how the old CI pipeline got away with
+          // leaving this unwrapped.)
+          OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {
           syntax: !debug,
