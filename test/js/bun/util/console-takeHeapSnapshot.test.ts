@@ -15,13 +15,17 @@ test("console.takeHeapSnapshot can be called repeatedly after a failed require",
         console.error("OK");
       `,
     ],
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      BUN_JSC_validateExceptionChecks: "1",
+    },
     stdout: "ignore",
     stderr: "pipe",
   });
 
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
+  expect(stderr).not.toContain("Unchecked JS exception");
   expect(stderr).toContain("OK");
   expect(exitCode).toBe(0);
 });

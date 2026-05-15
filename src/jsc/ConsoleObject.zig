@@ -3756,7 +3756,7 @@ pub fn takeHeapSnapshot(
     _: usize,
 ) callconv(jsc.conv) void {
     // TODO: this does an extra JSONStringify and we don't need it to!
-    var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
+    var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot() catch return};
     ConsoleObject.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
 }
 pub fn timeStamp(

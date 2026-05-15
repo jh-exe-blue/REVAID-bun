@@ -531,8 +531,8 @@ pub const JSGlobalObject = opaque {
     }
 
     extern fn JSC__JSGlobalObject__generateHeapSnapshot(*JSGlobalObject) JSValue;
-    pub fn generateHeapSnapshot(this: *JSGlobalObject) JSValue {
-        return JSC__JSGlobalObject__generateHeapSnapshot(this);
+    pub fn generateHeapSnapshot(this: *JSGlobalObject) bun.JSError!JSValue {
+        return bun.jsc.fromJSHostCall(this, @src(), JSC__JSGlobalObject__generateHeapSnapshot, .{this});
     }
 
     // DEPRECATED - use TopExceptionScope to check for exceptions and signal exceptions by returning JSError
