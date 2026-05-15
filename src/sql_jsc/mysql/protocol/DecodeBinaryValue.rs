@@ -96,9 +96,14 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 ..Default::default()
             })
         }
+        // MYSQL_TYPE_INT24 (MEDIUMINT) is encoded as 4 bytes on the wire —
+        // the server sign/zero-extends the high byte so it packs into a
+        // LONG-sized slot. mysql2 reads it with readInt32. Reading only 3
+        // bytes would leave the extension byte in the stream and misalign
+        // the cursor for every following column (same bug class as YEAR).
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
-                let data = reader.read(3)?;
+                let data = reader.read(4)?;
                 return Ok(SQLDataCell::raw(Some(&data)));
             }
             if unsigned {

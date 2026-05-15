@@ -88,16 +88,27 @@ impl<C: ReaderContext> NewReader<C> {
         Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
     }
 
-    /// Zig `reader.int(u24)` — read 3 little-endian bytes, zero-extend to u32.
+    /// MySQL's `MYSQL_TYPE_INT24` is sent as a **4-byte** little-endian
+    /// integer in the binary result row (identical wire shape to
+    /// `MYSQL_TYPE_LONG` — the server sign/zero-extends the high byte).
+    /// mysql2 reads it with `readInt32`; the port originally consumed only
+    /// 3 bytes because `reader.int(u24)` *looked* like 3 bytes, but Zig's
+    /// `@sizeOf(u24)` is 4 and the original reader advanced by 4 wire
+    /// bytes before `@bitCast`-ing the low 3 into a `u24`. Reading 3 bytes
+    /// here misaligns the cursor for every following column — same bug
+    /// class as #30854 for YEAR.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
+        // Low 24 bits only; the 4th byte is always 0x00 for unsigned.
         Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
     }
 
-    /// Zig `reader.int(i24)` — read 3 little-endian bytes, sign-extend to i32.
+    /// Signed `MYSQL_TYPE_INT24`. See `int_u24`: 4 wire bytes, sign-extend
+    /// the low 24 into an `i32`. The server sends 0xFF in the high byte for
+    /// negative values; we honour the sign from the 24-bit payload.
     pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
-        let data = self.read(3)?;
+        let data = self.read(4)?;
         let s = data.slice();
         let u = u32::from_le_bytes([s[0], s[1], s[2], 0]);
         // sign-extend 24 -> 32
