@@ -498,13 +498,13 @@ fn NewLexer_(
 
                                         switch (c3) {
                                             '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
+                                                value = value *| 16 | (c3 - '0');
                                             },
                                             'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
+                                                value = value *| 16 | (c3 + 10 - 'a');
                                             },
                                             'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
+                                                value = value *| 16 | (c3 + 10 - 'A');
                                             },
                                             '}' => {
                                                 if (is_first) {
@@ -546,13 +546,13 @@ fn NewLexer_(
                                     while (j < 4) : (j += 1) {
                                         switch (c3) {
                                             '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
+                                                value = value *| 16 | (c3 - '0');
                                             },
                                             'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
+                                                value = value *| 16 | (c3 + 10 - 'a');
                                             },
                                             'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
+                                                value = value *| 16 | (c3 + 10 - 'A');
                                             },
                                             else => {
                                                 lexer.end = start + iter.i - width3;

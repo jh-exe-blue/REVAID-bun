@@ -1063,10 +1063,10 @@ impl<'a> Lexer<'a> {
 
                             // variable-length
                             if c3 == '{' as CodePoint {
-                                let hex_start = iter.i as usize
-                                    - width as usize
-                                    - width2 as usize
-                                    - width3 as usize;
+                                let hex_start = (iter.i as usize)
+                                    .saturating_sub(width as usize)
+                                    .saturating_sub(width2 as usize)
+                                    .saturating_sub(width3 as usize);
                                 let mut is_first = true;
                                 let mut is_out_of_range = false;
                                 'variable_length: loop {
@@ -1083,7 +1083,7 @@ impl<'a> Lexer<'a> {
                                         break 'variable_length;
                                     }
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = start + iter.i as usize - width3 as usize;
                                             return self.syntax_error();
@@ -1120,7 +1120,7 @@ impl<'a> Lexer<'a> {
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
-                                        Some(d) => value = value * 16 | d as i64,
+                                        Some(d) => value = value.saturating_mul(16) | d as i64,
                                         None => {
                                             self.end = start + iter.i as usize - width3 as usize;
                                             return self.syntax_error();
