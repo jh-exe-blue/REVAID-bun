@@ -704,10 +704,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // across the `H3` const; `<*mut _>::cast()` is safe. Construction is the
         // safe `Fallback::get_init` (claim + `MaybeUninit::write`); only the
         // server-owned-pool deref is unsafe.
-        let pool: *mut bun_collections::hive_array::Fallback<
-            ServerRequestContext<SSL, DEBUG>,
-            2048,
-        > = server.request_pool.cast();
+        let pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false> =
+            server.request_pool.cast();
         // SAFETY: `pool` points at a process-static (or server-owned) Fallback
         // valid for the server's lifetime.
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = unsafe {

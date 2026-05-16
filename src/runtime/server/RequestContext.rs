@@ -112,15 +112,25 @@ pub type ResponseStream<const SSL_ENABLED: bool, const HTTP3: bool> =
 pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
     crate::webcore::streams::HTTPServerWritableJSSink<SSL_ENABLED, HTTP3>;
 
-/// This pre-allocates up to 2,048 RequestContext structs.
-/// It costs about 655,632 bytes.
+/// Inline capacity of the per-server `RequestContext` pool. Cast sites that
+/// reinterpret a `RequestContextStackAllocator<…>` pointer for a different
+/// `Ctx` monomorphization (server_body.rs) name this constant rather than
+/// hardcoding the literal — the layout of `Fallback` depends on it, so a
+/// mismatch is a silent OOB.
 // TODO(port): bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback
+pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = 2048;
+
+/// This pre-allocates up to [`REQUEST_CONTEXT_POOL_CAPACITY`] (2,048)
+/// RequestContext structs. It costs about 655,632 bytes.
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
     const DBG: bool,
     const H3: bool,
-> = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
+> = bun_collections::hive_array::Fallback<
+    RequestContext<ThisServer, SSL, DBG, H3>,
+    REQUEST_CONTEXT_POOL_CAPACITY,
+>;
 
 thread_local! {
     // TODO(refactor): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is

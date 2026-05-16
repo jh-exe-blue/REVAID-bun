@@ -3128,7 +3128,10 @@ where
         // uninitialized storage, and a panic in `Ctx::create` cannot leave a
         // half-initialized `RequestContext` (its drop glue is the heaviest in
         // the codebase). The only `unsafe` is the server-owned-pool deref.
-        let pool: *mut bun_collections::hive_array::Fallback<Ctx, 2048> = if Ctx::IS_H3 {
+        let pool: *mut bun_collections::hive_array::Fallback<
+            Ctx,
+            { super::request_context::REQUEST_CONTEXT_POOL_CAPACITY },
+        > = if Ctx::IS_H3 {
             debug_assert!(
                 !self.h3_request_pool.is_null(),
                 "H3 request dispatched but h3_request_pool was never allocated (listen() H3 path not taken)"
@@ -3397,9 +3400,11 @@ where
         // `request_pool`'s element is layout-identical to `ServerRequestContext`
         // across the `H3` const; `<*mut _>::cast()` is safe. Construction is the
         // safe `Fallback::get_init`; only the server-owned-pool deref is unsafe.
-        let pool: *mut bun_collections::hive_array::Fallback<
-            ServerRequestContext<SSL, DEBUG>,
-            2048,
+        let pool: *mut super::request_context::RequestContextStackAllocator<
+            Self,
+            SSL,
+            DEBUG,
+            false,
         > = this.request_pool.cast();
         // SAFETY: `pool` is non-null and valid for the server lifetime.
         let ctx = unsafe {
