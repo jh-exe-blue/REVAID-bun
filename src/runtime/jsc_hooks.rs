@@ -4499,10 +4499,17 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Borrows if downcast to `&mut Graph`). This hook runs on the JS
     // thread; `find` is read-only over the post-init `files` table.
     let graph = bun_standalone_graph::Graph::get()?;
+
+    // Acquire the lock BEFORE forming the `&mut File` below — two Workers
+    // can reach this function concurrently, and the returned `&mut File`
+    // lives across the blocking filesystem I/O that follows. Forming the
+    // `&mut` inside the locked region serialises its lifetime with the
+    // lock, avoiding the Stacked-Borrows-aliased-`&mut` hazard that
+    // `Graph::get()`'s doc comment warns about.
+    let _guard = EXTRACTED_PATH_LOCK.lock();
+
     let file = (unsafe { &mut *graph }).find(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
-
-    let _guard = EXTRACTED_PATH_LOCK.lock();
 
     // Fast path: already extracted (possibly by a prior Worker). Validate
     // the cached path still points at a file we own with the expected size.
