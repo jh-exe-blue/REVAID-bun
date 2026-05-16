@@ -1,17 +1,18 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
+#[allow(unused_imports)]
+use crate::test_runner::expect::{JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
+use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 
+use crate::test_runner::bun_test::debug::group;
 use crate::test_runner::bun_test::{
     self, BunTest, BunTestPtr, BunTestRoot, DescribeScope, HandleUncaughtExceptionResult,
     RefDataValue, StepResult,
 };
-use crate::test_runner::bun_test::debug::group;
-// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths in Phase B
+// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
 use bun_jsc::console_object::Formatter as ConsoleFormatter;
 
@@ -24,7 +25,6 @@ pub struct Collection {
     // into the tree rooted at `root_scope`. They are stored as raw `NonNull` (not `&`) so that
     // `active_scope_mut()` may hand out `&mut DescribeScope` to the same nodes without
     // invalidating any live shared-reference tags under Stacked Borrows.
-
     pub root_scope: Box<DescribeScope>,
     pub active_scope: NonNull<DescribeScope>,
 
@@ -53,7 +53,11 @@ impl Collection {
         let bun_test_root = unsafe { &mut *bun_test_root };
 
         let only = if let Some(runner) = Jest::runner() {
-            if runner.only { bun_test::Only::Contains } else { bun_test::Only::No }
+            if runner.only {
+                bun_test::Only::Contains
+            } else {
+                bun_test::Only::No
+            }
         } else {
             bun_test::Only::No
         };
@@ -125,7 +129,13 @@ impl Collection {
             group::log(format_args!(
                 "enqueueDescribeCallback / {} / in scope: {}",
                 bstr::BStr::new(new_scope.base.name.as_deref().unwrap_or(b"(unnamed)")),
-                bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)")),
+                bstr::BStr::new(
+                    self.active_scope()
+                        .base
+                        .name
+                        .as_deref()
+                        .unwrap_or(b"(unnamed)")
+                ),
             ));
 
             // Store raw NonNull cursors (not `&`) so later `active_scope_mut()` calls on the same
@@ -162,12 +172,24 @@ impl Collection {
 
         group::log(format_args!(
             "collection:runOneCompleted reset scope back from {}",
-            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(
+                self.active_scope()
+                    .base
+                    .name
+                    .as_deref()
+                    .unwrap_or(b"undefined")
+            ),
         ));
         self.active_scope = prev_scope;
         group::log(format_args!(
             "collection:runOneCompleted reset scope back to {}",
-            bstr::BStr::new(self.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+            bstr::BStr::new(
+                self.active_scope()
+                    .base
+                    .name
+                    .as_deref()
+                    .unwrap_or(b"undefined")
+            ),
         ));
         Ok(())
     }
@@ -219,14 +241,26 @@ impl Collection {
 
             group::log(format_args!(
                 "collection:runOne set scope from {}",
-                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+                bstr::BStr::new(
+                    this.active_scope()
+                        .base
+                        .name
+                        .as_deref()
+                        .unwrap_or(b"undefined")
+                ),
             ));
             // `new_scope` was constructed from the `&mut DescribeScope` returned by
             // `append_describe`, so it carries write-capable provenance for `active_scope_mut()`.
             this.active_scope = new_scope;
             group::log(format_args!(
                 "collection:runOne set scope to {}",
-                bstr::BStr::new(this.active_scope().base.name.as_deref().unwrap_or(b"undefined")),
+                bstr::BStr::new(
+                    this.active_scope()
+                        .base
+                        .name
+                        .as_deref()
+                        .unwrap_or(b"undefined")
+                ),
             ));
 
             if let Some(cfg_data) = BunTest::run_test_callback(
@@ -234,7 +268,9 @@ impl Collection {
                 global_this,
                 callback.get(),
                 false,
-                RefDataValue::Collection { active_scope: previous_scope },
+                RefDataValue::Collection {
+                    active_scope: previous_scope,
+                },
                 &Timespec::EPOCH,
             ) {
                 // the result is available immediately; queue
@@ -242,15 +278,14 @@ impl Collection {
                 buntest_strong.get().add_result(cfg_data);
             }
 
-            return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+            return Ok(StepResult::Waiting {
+                timeout: Timespec::EPOCH,
+            });
         }
         Ok(StepResult::Complete)
     }
 
-    pub fn handle_uncaught_exception(
-        &mut self,
-        _: &RefDataValue,
-    ) -> HandleUncaughtExceptionResult {
+    pub fn handle_uncaught_exception(&mut self, _: &RefDataValue) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
         self.active_scope_mut().failed = true;

@@ -2,7 +2,7 @@
 //!
 //! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
 //!
-//! DISSOLVED — the Phase-A draft that lived here duplicated every public type
+//! DISSOLVED — the original draft that lived here duplicated every public type
 //! (`Key`, `SourceId`, `Entry`, `WeakRef`, `SourceMapStore`, `GetResult`, …)
 //! against `dev_server/source_map_store.rs`, with no call sites resolving to
 //! this module. The duplicate carried three spec divergences:
@@ -28,6 +28,6 @@
 
 pub use crate::bake::dev_server::source_map_store::{
     EncodeSourceMapPathError, Entry, EntryIndex, GetResult, Key, LocateWeakRefResult,
-    PutOrIncrementRefCount, RemoveOrUpgradeMode, SourceId, SourceMapStore, WeakRef,
-    WEAK_REF_ENTRY_MAX, WEAK_REF_EXPIRY_SECONDS,
+    PutOrIncrementRefCount, RemoveOrUpgradeMode, SourceId, SourceMapStore, WEAK_REF_ENTRY_MAX,
+    WEAK_REF_EXPIRY_SECONDS, WeakRef,
 };

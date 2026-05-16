@@ -1,20 +1,17 @@
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use core::ffi::c_void;
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
-use bun_jsc::console_object::Formatter;
 use bun_core::strings;
+use bun_jsc::console_object::Formatter;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
 use super::Expect;
 use super::get_signature;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
-    pub fn to_contain(
-        &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn to_contain(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
 
@@ -22,7 +19,9 @@ impl Expect {
         let arguments = arguments_.slice();
 
         if arguments.len() < 1 {
-            return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("toContain() takes 1 argument"))
+            );
         }
 
         let expected = arguments[0];
@@ -30,7 +29,7 @@ impl Expect {
         let mut pass = false;
 
         // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a Phase-A struct lifetime param.
+        // `*JSGlobalObject` / `*bool` fields and avoid a struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
@@ -110,7 +109,7 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
+            // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -126,7 +125,7 @@ impl Expect {
             );
         }
 
-        // PERF(port): was comptime getSignature — profile in Phase B (make get_signature const fn / const_format)
+        // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,

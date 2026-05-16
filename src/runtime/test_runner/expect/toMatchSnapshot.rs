@@ -1,6 +1,7 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use bun_core::ZigString;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
 use super::get_signature;
@@ -24,24 +25,28 @@ pub fn to_match_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
             signature,
             "",
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
+            format_args!(
+                "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"
+            ),
         );
     }
 
     let Some(buntest_strong) = this.bun_test() else {
-        // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+        // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
         let signature = get_signature("toMatchSnapshot", "", true);
         return this.throw_fmt(
             global,
             signature,
             "",
-            format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
+            format_args!(
+                "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"
+            ),
         );
     };
     let _ = buntest_strong; // Drop at scope exit replaces `defer buntest_strong.deinit()`.
@@ -60,20 +65,24 @@ pub fn to_match_snapshot(
                     global,
                     "",
                     "",
-                    format_args!("\n\nMatcher error: Expected first argument to be a string or object\n"),
+                    format_args!(
+                        "\n\nMatcher error: Expected first argument to be a string or object\n"
+                    ),
                 );
             }
         }
         _ => {
             if !arguments[0].is_object() {
-                // PERF(port): was `comptime getSignature(...)` — requires `get_signature` be `const fn` in Phase B.
+                // PERF(port): was `comptime getSignature(...)` — would require `get_signature` to be `const fn`.
                 let signature =
                     get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
                 return this.throw_fmt(
                     global,
                     signature,
                     "",
-                    format_args!("\n\nMatcher error: Expected <green>properties<r> must be an object\n"),
+                    format_args!(
+                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n"
+                    ),
                 );
             }
 
@@ -102,7 +111,14 @@ pub fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(
+        &**this,
+        global,
+        value,
+        property_matchers,
+        hint.slice(),
+        "toMatchSnapshot",
+    )
 }
 
 // ported from: src/test_runner/expect/toMatchSnapshot.zig

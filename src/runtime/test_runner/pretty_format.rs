@@ -1,22 +1,23 @@
-use core::cell::{Cell, RefCell};
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
-use core::ffi::c_void;
+#[allow(unused_imports)]
+use crate::test_runner::expect::{JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use bun_io::Write as _;
+use core::cell::{Cell, RefCell};
+use core::ffi::c_void;
 
 use bun_collections::HashMap;
-use bun_core::{fmt as bun_fmt, Output};
+use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_js_parser::js_lexer as JSLexer;
 use bun_jsc::{
     self as jsc, CallFrame, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_js_parser::js_lexer as JSLexer;
-use bun_core::{strings, ZigString, ZigStringSlice};
 
 use super::expect;
 use crate::webcore::BlobExt as _;
 
 /// Local shim over `Output::pretty_fmt` that (a) accepts the const-generic
-/// `ENABLE_ANSI_COLORS` form the Phase-A draft was written against and
+/// `ENABLE_ANSI_COLORS` form callers in this file were written against and
 /// (b) returns a value that is `Display`, `Deref<Target=[u8]>`, *and* has an
 /// `.as_bytes()` method — covering all three call shapes in this file
 /// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
@@ -27,14 +28,23 @@ fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
 #[repr(transparent)]
 pub struct PrettyStr(Vec<u8>);
 impl PrettyStr {
-    #[inline] pub fn as_bytes(&self) -> &[u8] { &self.0 }
+    #[inline]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl core::ops::Deref for PrettyStr {
     type Target = [u8];
-    #[inline] fn deref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl AsRef<[u8]> for PrettyStr {
-    #[inline] fn as_ref(&self) -> &[u8] { &self.0 }
+    #[inline]
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
 }
 impl core::fmt::Display for PrettyStr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -113,7 +123,9 @@ type Counter = HashMap<u64, u32>;
 
 impl Default for JestPrettyFormat {
     fn default() -> Self {
-        Self { counts: Counter::default() }
+        Self {
+            counts: Counter::default(),
+        }
     }
 }
 
@@ -158,7 +170,12 @@ pub struct FormatOptions {
 
 impl Default for FormatOptions {
     fn default() -> Self {
-        Self { enable_colors: false, add_newline: false, flush: false, quote_strings: false }
+        Self {
+            enable_colors: false,
+            add_newline: false,
+            flush: false,
+            quote_strings: false,
+        }
     }
 }
 
@@ -329,8 +346,7 @@ pub mod visited {
     // `ObjectPool(Map, Map.init, true, 16)` — `INIT` allocates an empty map,
     // `reset` is `clearRetainingCapacity` (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+        const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -430,8 +446,16 @@ pub struct ZigFormatter<'a, 'b> {
 }
 
 impl<'a, 'b> ZigFormatter<'a, 'b> {
-    pub fn new(formatter: &'a mut Formatter<'b>, global: &'b JSGlobalObject, value: JSValue) -> Self {
-        Self { formatter: Cell::new(Some(formatter)), global, value }
+    pub fn new(
+        formatter: &'a mut Formatter<'b>,
+        global: &'b JSGlobalObject,
+        value: JSValue,
+    ) -> Self {
+        Self {
+            formatter: Cell::new(Some(formatter)),
+            global,
+            value,
+        }
     }
 }
 
@@ -539,51 +563,84 @@ pub struct TagResult {
 
 impl Default for TagResult {
     fn default() -> Self {
-        Self { tag: Tag::Undefined, cell: JSType::Cell }
+        Self {
+            tag: Tag::Undefined,
+            cell: JSType::Cell,
+        }
     }
 }
 
 impl Tag {
     pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
         if value.is_empty() || value == JSValue::UNDEFINED {
-            return Ok(TagResult { tag: Tag::Undefined, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::Undefined,
+                ..Default::default()
+            });
         }
         if value == JSValue::NULL {
-            return Ok(TagResult { tag: Tag::Null, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::Null,
+                ..Default::default()
+            });
         }
 
         if value.is_int32() {
-            return Ok(TagResult { tag: Tag::Integer, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::Integer,
+                ..Default::default()
+            });
         } else if value.is_number() {
-            return Ok(TagResult { tag: Tag::Double, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::Double,
+                ..Default::default()
+            });
         } else if value.is_boolean() {
-            return Ok(TagResult { tag: Tag::Boolean, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::Boolean,
+                ..Default::default()
+            });
         }
 
         if !value.is_cell() {
-            return Ok(TagResult { tag: Tag::NativeCode, ..Default::default() });
+            return Ok(TagResult {
+                tag: Tag::NativeCode,
+                ..Default::default()
+            });
         }
 
         let js_type = value.js_type();
 
         if js_type.is_hidden() {
-            return Ok(TagResult { tag: Tag::NativeCode, cell: js_type });
+            return Ok(TagResult {
+                tag: Tag::NativeCode,
+                cell: js_type,
+            });
         }
 
         // Cell is the "unknown" type
         if js_type == JSType::Cell {
-            return Ok(TagResult { tag: Tag::NativeCode, cell: js_type });
+            return Ok(TagResult {
+                tag: Tag::NativeCode,
+                cell: js_type,
+            });
         }
 
         if js_type == JSType::DOMWrapper {
-            return Ok(TagResult { tag: Tag::Private, cell: js_type });
+            return Ok(TagResult {
+                tag: Tag::Private,
+                cell: js_type,
+            });
         }
 
         // If we check an Object has a method table and it does not
         // it will crash
         if js_type != JSType::Object && value.is_callable() {
             if value.is_class(global_this) {
-                return Ok(TagResult { tag: Tag::Class, cell: js_type });
+                return Ok(TagResult {
+                    tag: Tag::Class,
+                    cell: js_type,
+                });
             }
 
             return Ok(TagResult {
@@ -591,7 +648,11 @@ impl Tag {
                 // callable namespaces and printing the contents of it is better than [Function: namespace]
                 // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
                 // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
-                tag: if js_type == JSType::InternalFunction { Tag::Object } else { Tag::Function },
+                tag: if js_type == JSType::InternalFunction {
+                    Tag::Object
+                } else {
+                    Tag::Function
+                },
                 cell: js_type,
             });
         }
@@ -611,14 +672,17 @@ impl Tag {
                 let mut react_element = ZigString::init(b"react.element");
                 let mut react_fragment = ZigString::init(b"react.fragment");
 
-                if typeof_symbol
-                    .is_same_value(JSValue::symbol_for(global_this, &mut react_element), global_this)?
-                    || typeof_symbol.is_same_value(
-                        JSValue::symbol_for(global_this, &mut react_fragment),
-                        global_this,
-                    )?
-                {
-                    return Ok(TagResult { tag: Tag::JSX, cell: js_type });
+                if typeof_symbol.is_same_value(
+                    JSValue::symbol_for(global_this, &mut react_element),
+                    global_this,
+                )? || typeof_symbol.is_same_value(
+                    JSValue::symbol_for(global_this, &mut react_fragment),
+                    global_this,
+                )? {
+                    return Ok(TagResult {
+                        tag: Tag::JSX,
+                        cell: js_type,
+                    });
                 }
             }
         }
@@ -751,22 +815,33 @@ impl<'a> Formatter<'a> {
                     self.remaining_values = &self.remaining_values[1..];
                     let r = match token {
                         Tag::String => self.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
+                            writer.ctx,
+                            next_value,
+                            next_value.js_type(),
                         ),
                         Tag::Double => self.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
+                            writer.ctx,
+                            next_value,
+                            next_value.js_type(),
                         ),
                         Tag::Object => self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
+                            writer.ctx,
+                            next_value,
+                            next_value.js_type(),
                         ),
                         Tag::Integer => self.print_as::<W, { Tag::Integer }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, next_value, next_value.js_type(),
+                            writer.ctx,
+                            next_value,
+                            next_value.js_type(),
                         ),
 
                         // undefined is overloaded to mean the '%o" field
                         Tag::Undefined => match Tag::get(next_value, global_this) {
                             Ok(tag) => self.format::<W, ENABLE_ANSI_COLORS>(
-                                tag, writer.ctx, next_value, global_this,
+                                tag,
+                                writer.ctx,
+                                next_value,
+                                global_this,
                             ),
                             Err(_) => return,
                         },
@@ -811,7 +886,11 @@ pub struct WrappedWriter<'w, W: bun_io::Write> {
 
 impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     pub fn new(ctx: &'w mut W) -> Self {
-        Self { ctx, failed: false, estimated_line_length: None }
+        Self {
+            ctx,
+            failed: false,
+            estimated_line_length: None,
+        }
     }
 
     pub fn print(&mut self, args: core::fmt::Arguments<'_>) {
@@ -920,16 +999,24 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
+            return;
+        };
         if ctx.formatter.failed {
             return;
         }
-        let Ok(key) = JSObject::get_index(next_value, global_object, 0) else { return };
-        let Ok(value) = JSObject::get_index(next_value, global_object, 1) else { return };
+        let Ok(key) = JSObject::get_index(next_value, global_object, 0) else {
+            return;
+        };
+        let Ok(value) = JSObject::get_index(next_value, global_object, 1) else {
+            return;
+        };
         if ctx.formatter.write_indent(ctx.writer).is_err() {
             return;
         }
-        let Ok(key_tag) = Tag::get(key, global_object) else { return };
+        let Ok(key_tag) = Tag::get(key, global_object) else {
+            return;
+        };
 
         if ctx
             .formatter
@@ -941,15 +1028,26 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if ctx.writer.write_all(b" => ").is_err() {
             return;
         }
-        let Ok(value_tag) = Tag::get(value, global_object) else { return };
+        let Ok(value_tag) = Tag::get(value, global_object) else {
+            return;
+        };
         if ctx
             .formatter
-            .format::<W, ENABLE_ANSI_COLORS>(value_tag, ctx.writer, value, ctx.formatter.global_this)
+            .format::<W, ENABLE_ANSI_COLORS>(
+                value_tag,
+                ctx.writer,
+                value,
+                ctx.formatter.global_this,
+            )
             .is_err()
         {
             return;
         }
-        if ctx.formatter.print_comma::<W, ENABLE_ANSI_COLORS>(ctx.writer).is_err() {
+        if ctx
+            .formatter
+            .print_comma::<W, ENABLE_ANSI_COLORS>(ctx.writer)
+            .is_err()
+        {
             return;
         }
         let _ = ctx.writer.write_all(b"\n");
@@ -971,14 +1069,18 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         next_value: JSValue,
     ) {
         // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else {
+            return;
+        };
         if ctx.formatter.failed {
             return;
         }
         if ctx.formatter.write_indent(ctx.writer).is_err() {
             return;
         }
-        let Ok(key_tag) = Tag::get(next_value, global_object) else { return };
+        let Ok(key_tag) = Tag::get(next_value, global_object) else {
+            return;
+        };
         if ctx
             .formatter
             .format::<W, ENABLE_ANSI_COLORS>(
@@ -991,7 +1093,11 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         {
             return;
         }
-        if ctx.formatter.print_comma::<W, ENABLE_ANSI_COLORS>(ctx.writer).is_err() {
+        if ctx
+            .formatter
+            .print_comma::<W, ENABLE_ANSI_COLORS>(ctx.writer)
+            .is_err()
+        {
             return;
         }
         let _ = ctx.writer.write_all(b"\n");
@@ -1068,12 +1174,16 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         }
 
         // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
+        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else {
+            return;
+        };
         if ctx.formatter.failed {
             return;
         }
 
-        let Ok(tag) = Tag::get(value, global_this) else { return };
+        let Ok(tag) = Tag::get(value, global_this) else {
+            return;
+        };
 
         if tag.cell.is_hidden() {
             return;
@@ -1085,7 +1195,11 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             if Self::handle_first_property(ctx, global_this, parent).is_err() {
                 return;
             }
-        } else if ctx.formatter.print_comma::<W, ENABLE_ANSI_COLORS>(&mut *ctx.writer).is_err() {
+        } else if ctx
+            .formatter
+            .print_comma::<W, ENABLE_ANSI_COLORS>(&mut *ctx.writer)
+            .is_err()
+        {
             return;
         }
 
@@ -1330,9 +1444,7 @@ impl<'a> Formatter<'a> {
                                     remaining = remaining.substring(i + 1);
                                 }
                                 CR => {
-                                    if i + 1 < remaining.len
-                                        && remaining.char_at(i + 1) == LF
-                                    {
+                                    if i + 1 < remaining.len && remaining.char_at(i + 1) == LF {
                                         writer.print(format_args!(
                                             "{}",
                                             remaining.substring_with_len(0, i)
@@ -1422,7 +1534,9 @@ impl<'a> Formatter<'a> {
                 Tag::Double => {
                     if value.is_cell() {
                         self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Object,
+                            writer.ctx,
+                            value,
+                            JSType::Object,
                         )?;
                         return Ok(());
                     }
@@ -1460,9 +1574,7 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>").as_bytes(),
                         );
                         writer.write_all(dtoa);
-                        writer.write_all(
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes(),
-                        );
+                        writer.write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes());
                     }
                 }
                 Tag::Undefined => {
@@ -1506,7 +1618,9 @@ impl<'a> Formatter<'a> {
                     value.get_class_name(self.global_this, &mut classname)?;
                     let mut message_string = bun_core::String::empty();
 
-                    if let Some(message_prop) = value.fast_get(self.global_this, jsc::BuiltinName::Message)? {
+                    if let Some(message_prop) =
+                        value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                    {
                         message_string = message_prop.to_bun_string(self.global_this)?;
                     }
 
@@ -1590,7 +1704,8 @@ impl<'a> Formatter<'a> {
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
                                     JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
+                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this)
+                                            .cast_mut(),
                                         r#ref,
                                         0,
                                         core::ptr::null_mut(),
@@ -1609,14 +1724,16 @@ impl<'a> Formatter<'a> {
                                 self.add_for_new_line(1);
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
+                                    tag,
+                                    writer.ctx,
+                                    element,
+                                    self.global_this,
                                 )?;
 
                                 if tag.cell.is_string_like() {
                                     if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const::<true>("<r>").as_bytes(),
-                                        );
+                                        writer
+                                            .write_all(pretty_fmt_const::<true>("<r>").as_bytes());
                                     }
                                 }
 
@@ -1638,7 +1755,8 @@ impl<'a> Formatter<'a> {
                                 // takes `*mut JSGlobalObject` by convention but never mutates it.
                                 let element = JSValue::c(unsafe {
                                     JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
+                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this)
+                                            .cast_mut(),
                                         r#ref,
                                         i,
                                         core::ptr::null_mut(),
@@ -1647,14 +1765,16 @@ impl<'a> Formatter<'a> {
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, element, self.global_this,
+                                    tag,
+                                    writer.ctx,
+                                    element,
+                                    self.global_this,
                                 )?;
 
                                 if tag.cell.is_string_like() {
                                     if ENABLE_ANSI_COLORS {
-                                        writer.write_all(
-                                            pretty_fmt_const::<true>("<r>").as_bytes(),
-                                        );
+                                        writer
+                                            .write_all(pretty_fmt_const::<true>("<r>").as_bytes());
                                     }
                                 }
 
@@ -1781,15 +1901,14 @@ impl<'a> Formatter<'a> {
                             to_json_function.call(self.global_this, value, &[])?,
                             JSType::Object,
                         );
-                    } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
+                    } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>()
+                    {
                         self.add_for_new_line(
-                            b"Timeout(# ) ".len()
-                                + bun_fmt::digit_count(timer.internals.id.max(0)),
+                            b"Timeout(# ) ".len() + bun_fmt::digit_count(timer.internals.id.max(0)),
                         );
                         if timer.internals.flags.get().kind() == crate::timer::Kind::SetInterval {
                             self.add_for_new_line(
-                                b"repeats ".len()
-                                    + bun_fmt::digit_count(timer.internals.id.max(0)),
+                                b"repeats ".len() + bun_fmt::digit_count(timer.internals.id.max(0)),
                             );
                             writer.print(format_args!(
                                 "{}Timeout{} {}(#{}{}{}{}, repeats){}",
@@ -1837,17 +1956,27 @@ impl<'a> Formatter<'a> {
                         ));
 
                         return Ok(());
-                    } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>() {
+                    } else if let Some(build_log) = value.as_class_ref::<crate::api::BuildMessage>()
+                    {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        let _ = build_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+                        let _ = build_log
+                            .msg
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
-                    } else if let Some(resolve_log) = value.as_class_ref::<crate::api::ResolveMessage>() {
+                    } else if let Some(resolve_log) =
+                        value.as_class_ref::<crate::api::ResolveMessage>()
+                    {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
-                        let _ = resolve_log.msg.write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
+                        let _ = resolve_log
+                            .msg
+                            .write_format::<ENABLE_ANSI_COLORS>(&mut bridge);
                         return Ok(());
                     } else if NAME_BUF.with_borrow(|name_buf| {
                         JestPrettyFormat::print_asymmetric_matcher::<_, W, ENABLE_ANSI_COLORS>(
-                            self, &mut writer, name_buf, value,
+                            self,
+                            &mut writer,
+                            name_buf,
+                            value,
                         )
                     })? {
                         return Ok(());
@@ -1863,7 +1992,9 @@ impl<'a> Formatter<'a> {
                         );
                     }
                     return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                        writer.ctx, value, JSType::Event,
+                        writer.ctx,
+                        value,
+                        JSType::Event,
                     );
                 }
                 Tag::NativeCode => {
@@ -1880,7 +2011,9 @@ impl<'a> Formatter<'a> {
                 Tag::Boolean => {
                     if value.is_cell() {
                         self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Object,
+                            writer.ctx,
+                            value,
+                            JSType::Object,
                         )?;
                         return Ok(());
                     }
@@ -1892,7 +2025,8 @@ impl<'a> Formatter<'a> {
                     } else {
                         self.add_for_new_line(5);
                         writer.write_all(
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>false<r>").as_bytes(),
+                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><yellow>false<r>")
+                                .as_bytes(),
                         );
                     }
                 }
@@ -1901,7 +2035,9 @@ impl<'a> Formatter<'a> {
                     self.add_for_new_line(FMT.len());
                     writer.write_all(
                         pretty_fmt_const::<ENABLE_ANSI_COLORS>(concat!(
-                            "<cyan>", "[this.globalThis]", "<r>"
+                            "<cyan>",
+                            "[this.globalThis]",
+                            "<r>"
                         ))
                         .as_bytes(),
                     );
@@ -1915,8 +2051,11 @@ impl<'a> Formatter<'a> {
                     let prev_quote_strings = self.quote_strings;
                     self.quote_strings = true;
 
-                    let map_name: &str =
-                        if value.js_type() == JSType::WeakMap { "WeakMap" } else { "Map" };
+                    let map_name: &str = if value.js_type() == JSType::WeakMap {
+                        "WeakMap"
+                    } else {
+                        "Map"
+                    };
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
@@ -1961,8 +2100,11 @@ impl<'a> Formatter<'a> {
 
                     let _ = self.write_indent(writer.ctx);
 
-                    let set_name: &str =
-                        if value.js_type() == JSType::WeakSet { "WeakSet" } else { "Set" };
+                    let set_name: &str = if value.js_type() == JSType::WeakSet {
+                        "WeakSet"
+                    } else {
+                        "Set"
+                    };
 
                     if length == 0 {
                         self.quote_strings = prev_quote_strings;
@@ -2048,7 +2190,9 @@ impl<'a> Formatter<'a> {
                         evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                         _ => {
                             return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                                writer.ctx, value, JSType::Event,
+                                writer.ctx,
+                                value,
+                                JSType::Event,
                             );
                         }
                     };
@@ -2068,85 +2212,97 @@ impl<'a> Formatter<'a> {
                         // is restored even when `fastGet` / `Tag.get` / `format` throw.
                         // Wrap the fallible body and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
-                        self.write_indent(writer.ctx).expect("unreachable");
+                            self.write_indent(writer.ctx).expect("unreachable");
 
-                        writer.print(format_args!(
-                            "{}type: {}\"{}\"{}{},{}\n",
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>"),
-                            bstr::BStr::new(event_type.label()),
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                        ));
+                            writer.print(format_args!(
+                                "{}type: {}\"{}\"{}{},{}\n",
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>"),
+                                bstr::BStr::new(event_type.label()),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                            ));
 
-                        if let Some(message_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Message)?
-                        {
-                            if message_value.is_string() {
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                writer.print(format_args!(
-                                    "{}message{}:{} ",
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                                ));
-
-                                let tag = Tag::get(message_value, self.global_this)?;
-                                self.format::<W, ENABLE_ANSI_COLORS>(
-                                    tag, writer.ctx, message_value, self.global_this,
-                                )?;
-                                writer.write_all(b", \n");
-                            }
-                        }
-
-                        match event_type {
-                            EventType::MessageEvent => {
-                                self.write_indent(writer.ctx).expect("unreachable");
-                                writer.print(format_args!(
-                                    "{}data{}:{} ",
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
-                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                                ));
-                                let data: JSValue = value
-                                    .fast_get(self.global_this, jsc::BuiltinName::Data)?
-                                    .unwrap_or(JSValue::UNDEFINED);
-                                let tag = Tag::get(data, self.global_this)?;
-
-                                if tag.cell.is_string_like() {
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
-                                    )?;
-                                } else {
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
-                                    )?;
-                                }
-                                writer.write_all(b", \n");
-                            }
-                            EventType::ErrorEvent => {
-                                if let Some(data) =
-                                    value.fast_get(self.global_this, jsc::BuiltinName::Error)?
-                                {
+                            if let Some(message_value) =
+                                value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                            {
+                                if message_value.is_string() {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(
-                                        "{}error{}:{} ",
+                                        "{}message{}:{} ",
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
                                         pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                     ));
 
-                                    let tag = Tag::get(data, self.global_this)?;
+                                    let tag = Tag::get(message_value, self.global_this)?;
                                     self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, data, self.global_this,
+                                        tag,
+                                        writer.ctx,
+                                        message_value,
+                                        self.global_this,
                                     )?;
-                                    writer.write_all(b"\n");
+                                    writer.write_all(b", \n");
                                 }
                             }
-                            _ => unreachable!(),
-                        }
-                        Ok(())
+
+                            match event_type {
+                                EventType::MessageEvent => {
+                                    self.write_indent(writer.ctx).expect("unreachable");
+                                    writer.print(format_args!(
+                                        "{}data{}:{} ",
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                    ));
+                                    let data: JSValue = value
+                                        .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                                        .unwrap_or(JSValue::UNDEFINED);
+                                    let tag = Tag::get(data, self.global_this)?;
+
+                                    if tag.cell.is_string_like() {
+                                        self.format::<W, ENABLE_ANSI_COLORS>(
+                                            tag,
+                                            writer.ctx,
+                                            data,
+                                            self.global_this,
+                                        )?;
+                                    } else {
+                                        self.format::<W, ENABLE_ANSI_COLORS>(
+                                            tag,
+                                            writer.ctx,
+                                            data,
+                                            self.global_this,
+                                        )?;
+                                    }
+                                    writer.write_all(b", \n");
+                                }
+                                EventType::ErrorEvent => {
+                                    if let Some(data) =
+                                        value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                                    {
+                                        self.write_indent(writer.ctx).expect("unreachable");
+                                        writer.print(format_args!(
+                                            "{}error{}:{} ",
+                                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                        ));
+
+                                        let tag = Tag::get(data, self.global_this)?;
+                                        self.format::<W, ENABLE_ANSI_COLORS>(
+                                            tag,
+                                            writer.ctx,
+                                            data,
+                                            self.global_this,
+                                        )?;
+                                        writer.write_all(b"\n");
+                                    }
+                                }
+                                _ => unreachable!(),
+                            }
+                            Ok(())
                         })();
 
                         self.quote_strings = old_quote_strings;
@@ -2196,9 +2352,8 @@ impl<'a> Formatter<'a> {
                     }
 
                     if !is_tag_kind_primitive {
-                        writer.write_all(
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>").as_bytes(),
-                        );
+                        writer
+                            .write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<cyan>").as_bytes());
                     } else {
                         writer.write_all(
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<green>").as_bytes(),
@@ -2206,9 +2361,7 @@ impl<'a> Formatter<'a> {
                     }
                     writer.write_all(tag_name_slice.slice());
                     if ENABLE_ANSI_COLORS {
-                        writer.write_all(
-                            pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes(),
-                        );
+                        writer.write_all(pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>").as_bytes());
                     }
 
                     if let Some(key_value) = value.get(self.global_this, "key")? {
@@ -2246,238 +2399,253 @@ impl<'a> Formatter<'a> {
                         // closure (Ok(true) ⇒ children path printed the closing tag, so the
                         // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
-                        let Some(props_obj) = props.get_object() else { return Ok(false); };
-                        let mut props_iter = JSPropertyIterator::init(
-                            self.global_this,
-                            props_obj,
-                            jsc::PropertyIteratorOptions {
-                                skip_empty_name: true,
-                                include_value: true,
-                            },
-                        )?;
+                            let Some(props_obj) = props.get_object() else {
+                                return Ok(false);
+                            };
+                            let mut props_iter = JSPropertyIterator::init(
+                                self.global_this,
+                                props_obj,
+                                jsc::PropertyIteratorOptions {
+                                    skip_empty_name: true,
+                                    include_value: true,
+                                },
+                            )?;
 
-                        let children_prop = props.get(self.global_this, "children")?;
-                        if props_iter.len > 0 {
-                            {
-                                self.indent += 1;
-                                let count_without_children =
-                                    props_iter.len - usize::from(children_prop.is_some());
+                            let children_prop = props.get(self.global_this, "children")?;
+                            if props_iter.len > 0 {
+                                {
+                                    self.indent += 1;
+                                    let count_without_children =
+                                        props_iter.len - usize::from(children_prop.is_some());
 
-                                let loop_result: JsResult<()> = (|| {
-                                // PORT NOTE: `JSPropertyIterator::i` is private upstream;
-                                // track the 1-based iteration index locally (matches the
-                                // post-`next()` value of the Zig spec's `props_iter.i`).
-                                let mut iter_i: usize = 0;
-                                while let Some(prop) = props_iter.next()? {
-                                    iter_i += 1;
-                                    if prop.eql_comptime(b"children") {
-                                        continue;
-                                    }
+                                    let loop_result: JsResult<()> = (|| {
+                                        // PORT NOTE: `JSPropertyIterator::i` is private upstream;
+                                        // track the 1-based iteration index locally (matches the
+                                        // post-`next()` value of the Zig spec's `props_iter.i`).
+                                        let mut iter_i: usize = 0;
+                                        while let Some(prop) = props_iter.next()? {
+                                            iter_i += 1;
+                                            if prop.eql_comptime(b"children") {
+                                                continue;
+                                            }
 
-                                    let property_value = props_iter.value;
-                                    let tag = Tag::get(property_value, self.global_this)?;
+                                            let property_value = props_iter.value;
+                                            let tag = Tag::get(property_value, self.global_this)?;
 
-                                    if tag.cell.is_hidden() {
-                                        continue;
-                                    }
+                                            if tag.cell.is_hidden() {
+                                                continue;
+                                            }
 
-                                    if needs_space {
-                                        writer.write_all(b" ");
-                                    }
-                                    needs_space = false;
+                                            if needs_space {
+                                                writer.write_all(b" ");
+                                            }
+                                            needs_space = false;
 
-                                    writer.print(format_args!(
-                                        "{}{}{}={}",
-                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
-                                        prop.trunc(128),
-                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
-                                        pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
-                                    ));
+                                            writer.print(format_args!(
+                                                "{}{}{}={}",
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><blue>"),
+                                                prop.trunc(128),
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
+                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
+                                            ));
 
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const::<true>("<r><green>").as_bytes(),
-                                            );
-                                        }
-                                    }
+                                            if tag.cell.is_string_like() {
+                                                if ENABLE_ANSI_COLORS {
+                                                    writer.write_all(
+                                                        pretty_fmt_const::<true>("<r><green>")
+                                                            .as_bytes(),
+                                                    );
+                                                }
+                                            }
 
-                                    self.format::<W, ENABLE_ANSI_COLORS>(
-                                        tag, writer.ctx, property_value, self.global_this,
-                                    )?;
+                                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                                tag,
+                                                writer.ctx,
+                                                property_value,
+                                                self.global_this,
+                                            )?;
 
-                                    if tag.cell.is_string_like() {
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const::<true>("<r>").as_bytes(),
-                                            );
-                                        }
-                                    }
+                                            if tag.cell.is_string_like() {
+                                                if ENABLE_ANSI_COLORS {
+                                                    writer.write_all(
+                                                        pretty_fmt_const::<true>("<r>").as_bytes(),
+                                                    );
+                                                }
+                                            }
 
-                                    if
-                                    // count_without_children is necessary to prevent printing an extra newline
-                                    // if there are children and one prop and the child prop is the last prop
-                                    iter_i + 1 < count_without_children
+                                            if
+                                            // count_without_children is necessary to prevent printing an extra newline
+                                            // if there are children and one prop and the child prop is the last prop
+                                            iter_i + 1 < count_without_children
                                         // 3 is arbitrary but basically
                                         //  <input type="text" value="foo" />
                                         //  ^ should be one line
                                         // <input type="text" value="foo" bar="true" baz={false} />
                                         //  ^ should be multiple lines
                                         && iter_i > 3
-                                    {
-                                        writer.write_all(b"\n");
-                                        self.write_indent(writer.ctx).expect("unreachable");
-                                    } else if iter_i + 1 < count_without_children {
-                                        writer.write_all(b" ");
-                                    }
-                                }
-                                Ok(())
-                                })();
-                                self.indent = self.indent.saturating_sub(1);
-                                loop_result?;
-                            }
-
-                            if let Some(children) = children_prop {
-                                let tag = Tag::get(children, self.global_this)?;
-
-                                let print_children =
-                                    matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
-
-                                if print_children {
-                                    'print_children: {
-                                        match tag.tag {
-                                            Tag::String => {
-                                                let children_string =
-                                                    children.get_zig_string(self.global_this)?;
-                                                if children_string.len == 0 {
-                                                    break 'print_children;
-                                                }
-                                                if ENABLE_ANSI_COLORS {
-                                                    writer.write_all(
-                                                        pretty_fmt_const::<true>("<r>").as_bytes(),
-                                                    );
-                                                }
-
-                                                writer.write_all(b">");
-                                                if children_string.len < 128 {
-                                                    writer.write_string(children_string);
-                                                } else {
-                                                    self.indent += 1;
-                                                    writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    writer.write_string(children_string);
-                                                    writer.write_all(b"\n");
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                }
+                                            {
+                                                writer.write_all(b"\n");
+                                                self.write_indent(writer.ctx).expect("unreachable");
+                                            } else if iter_i + 1 < count_without_children {
+                                                writer.write_all(b" ");
                                             }
-                                            Tag::JSX => {
-                                                writer.write_all(b">\n");
+                                        }
+                                        Ok(())
+                                    })(
+                                    );
+                                    self.indent = self.indent.saturating_sub(1);
+                                    loop_result?;
+                                }
 
-                                                {
-                                                    self.indent += 1;
-                                                    let r: JsResult<()> = (|| {
+                                if let Some(children) = children_prop {
+                                    let tag = Tag::get(children, self.global_this)?;
+
+                                    let print_children =
+                                        matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array);
+
+                                    if print_children {
+                                        'print_children: {
+                                            match tag.tag {
+                                                Tag::String => {
+                                                    let children_string = children
+                                                        .get_zig_string(self.global_this)?;
+                                                    if children_string.len == 0 {
+                                                        break 'print_children;
+                                                    }
+                                                    if ENABLE_ANSI_COLORS {
+                                                        writer.write_all(
+                                                            pretty_fmt_const::<true>("<r>")
+                                                                .as_bytes(),
+                                                        );
+                                                    }
+
+                                                    writer.write_all(b">");
+                                                    if children_string.len < 128 {
+                                                        writer.write_string(children_string);
+                                                    } else {
+                                                        self.indent += 1;
+                                                        writer.write_all(b"\n");
                                                         self.write_indent(writer.ctx)
                                                             .expect("unreachable");
-                                                        self.format::<W, ENABLE_ANSI_COLORS>(
-                                                            Tag::get(children, self.global_this)?,
-                                                            writer.ctx,
-                                                            children,
-                                                            self.global_this,
-                                                        )
-                                                    })();
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
+                                                        self.indent = self.indent.saturating_sub(1);
+                                                        writer.write_string(children_string);
+                                                        writer.write_all(b"\n");
+                                                        self.write_indent(writer.ctx)
+                                                            .expect("unreachable");
+                                                    }
                                                 }
+                                                Tag::JSX => {
+                                                    writer.write_all(b">\n");
 
-                                                writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
-                                                    .expect("unreachable");
-                                            }
-                                            Tag::Array => {
-                                                let length =
-                                                    children.get_length(self.global_this)? as usize;
-                                                if length == 0 {
-                                                    break 'print_children;
-                                                }
-                                                writer.write_all(b">\n");
-
-                                                {
-                                                    self.indent += 1;
-                                                    self.write_indent(writer.ctx)
-                                                        .expect("unreachable");
-                                                    let _prev_quote_strings = self.quote_strings;
-                                                    self.quote_strings = false;
-
-                                                    let r: JsResult<()> = (|| {
-                                                        let mut j: usize = 0;
-                                                        while j < length {
-                                                            let child = JSObject::get_index(
+                                                    {
+                                                        self.indent += 1;
+                                                        let r: JsResult<()> = (|| {
+                                                            self.write_indent(writer.ctx)
+                                                                .expect("unreachable");
+                                                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                                                Tag::get(
+                                                                    children,
+                                                                    self.global_this,
+                                                                )?,
+                                                                writer.ctx,
                                                                 children,
                                                                 self.global_this,
-                                                                u32::try_from(j).unwrap(),
-                                                            )?;
-                                                            self.format::<W, ENABLE_ANSI_COLORS>(
+                                                            )
+                                                        })(
+                                                        );
+                                                        self.indent = self.indent.saturating_sub(1);
+                                                        r?;
+                                                    }
+
+                                                    writer.write_all(b"\n");
+                                                    self.write_indent(writer.ctx)
+                                                        .expect("unreachable");
+                                                }
+                                                Tag::Array => {
+                                                    let length = children
+                                                        .get_length(self.global_this)?
+                                                        as usize;
+                                                    if length == 0 {
+                                                        break 'print_children;
+                                                    }
+                                                    writer.write_all(b">\n");
+
+                                                    {
+                                                        self.indent += 1;
+                                                        self.write_indent(writer.ctx)
+                                                            .expect("unreachable");
+                                                        let _prev_quote_strings =
+                                                            self.quote_strings;
+                                                        self.quote_strings = false;
+
+                                                        let r: JsResult<()> = (|| {
+                                                            let mut j: usize = 0;
+                                                            while j < length {
+                                                                let child = JSObject::get_index(
+                                                                    children,
+                                                                    self.global_this,
+                                                                    u32::try_from(j).unwrap(),
+                                                                )?;
+                                                                self.format::<W, ENABLE_ANSI_COLORS>(
                                                                 Tag::get(child, self.global_this)?,
                                                                 writer.ctx,
                                                                 child,
                                                                 self.global_this,
                                                             )?;
-                                                            if j + 1 < length {
-                                                                writer.write_all(b"\n");
-                                                                self.write_indent(writer.ctx)
-                                                                    .expect("unreachable");
+                                                                if j + 1 < length {
+                                                                    writer.write_all(b"\n");
+                                                                    self.write_indent(writer.ctx)
+                                                                        .expect("unreachable");
+                                                                }
+                                                                j += 1;
                                                             }
-                                                            j += 1;
-                                                        }
-                                                        Ok(())
-                                                    })();
+                                                            Ok(())
+                                                        })(
+                                                        );
 
-                                                    self.quote_strings = _prev_quote_strings;
-                                                    self.indent = self.indent.saturating_sub(1);
-                                                    r?;
+                                                        self.quote_strings = _prev_quote_strings;
+                                                        self.indent = self.indent.saturating_sub(1);
+                                                        r?;
+                                                    }
+
+                                                    writer.write_all(b"\n");
+                                                    self.write_indent(writer.ctx)
+                                                        .expect("unreachable");
                                                 }
-
-                                                writer.write_all(b"\n");
-                                                self.write_indent(writer.ctx)
-                                                    .expect("unreachable");
+                                                _ => unreachable!(),
                                             }
-                                            _ => unreachable!(),
-                                        }
 
-                                        writer.write_all(b"</");
-                                        if !is_tag_kind_primitive {
-                                            writer.write_all(
-                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>(
-                                                    "<r><cyan>",
-                                                )
-                                                .as_bytes(),
-                                            );
-                                        } else {
-                                            writer.write_all(
-                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>(
-                                                    "<r><green>",
-                                                )
-                                                .as_bytes(),
-                                            );
-                                        }
-                                        writer.write_all(tag_name_slice.slice());
-                                        if ENABLE_ANSI_COLORS {
-                                            writer.write_all(
-                                                pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>")
+                                            writer.write_all(b"</");
+                                            if !is_tag_kind_primitive {
+                                                writer.write_all(
+                                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>(
+                                                        "<r><cyan>",
+                                                    )
                                                     .as_bytes(),
-                                            );
+                                                );
+                                            } else {
+                                                writer.write_all(
+                                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>(
+                                                        "<r><green>",
+                                                    )
+                                                    .as_bytes(),
+                                                );
+                                            }
+                                            writer.write_all(tag_name_slice.slice());
+                                            if ENABLE_ANSI_COLORS {
+                                                writer.write_all(
+                                                    pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>")
+                                                        .as_bytes(),
+                                                );
+                                            }
+                                            writer.write_all(b">");
                                         }
-                                        writer.write_all(b">");
-                                    }
 
-                                    return Ok(true);
+                                        return Ok(true);
+                                    }
                                 }
                             }
-                        }
-                        Ok(false)
+                            Ok(false)
                         })();
 
                         self.quote_strings = prev_quote_strings;
@@ -2708,13 +2876,18 @@ impl<'a> Formatter<'a> {
         let r = match result.tag {
             Tag::StringPossiblyFormatted => self
                 .print_as::<W, { Tag::StringPossiblyFormatted }, ENABLE_ANSI_COLORS>(
-                    writer, value, result.cell,
+                    writer,
+                    value,
+                    result.cell,
                 ),
             Tag::String => {
                 self.print_as::<W, { Tag::String }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::Undefined => self
-                .print_as::<W, { Tag::Undefined }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
+            Tag::Undefined => self.print_as::<W, { Tag::Undefined }, ENABLE_ANSI_COLORS>(
+                writer,
+                value,
+                result.cell,
+            ),
             Tag::Double => {
                 self.print_as::<W, { Tag::Double }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
@@ -2733,8 +2906,11 @@ impl<'a> Formatter<'a> {
             Tag::Object => {
                 self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::Function => self
-                .print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
+            Tag::Function => self.print_as::<W, { Tag::Function }, ENABLE_ANSI_COLORS>(
+                writer,
+                value,
+                result.cell,
+            ),
             Tag::Class => {
                 self.print_as::<W, { Tag::Class }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
@@ -2755,10 +2931,11 @@ impl<'a> Formatter<'a> {
             Tag::BigInt => {
                 self.print_as::<W, { Tag::BigInt }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::GlobalObject => self
-                .print_as::<W, { Tag::GlobalObject }, ENABLE_ANSI_COLORS>(
-                    writer, value, result.cell,
-                ),
+            Tag::GlobalObject => self.print_as::<W, { Tag::GlobalObject }, ENABLE_ANSI_COLORS>(
+                writer,
+                value,
+                result.cell,
+            ),
             Tag::Private => {
                 self.print_as::<W, { Tag::Private }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
@@ -2768,8 +2945,11 @@ impl<'a> Formatter<'a> {
             Tag::JSON => {
                 self.print_as::<W, { Tag::JSON }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::NativeCode => self
-                .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
+            Tag::NativeCode => self.print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(
+                writer,
+                value,
+                result.cell,
+            ),
             Tag::JSX => {
                 self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
@@ -2791,13 +2971,21 @@ impl<'a> Formatter<'a> {
 /// `bun_jsc::FormatTag` enum onto this file's smaller `Tag` set.
 impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     #[inline]
-    fn global_this(&self) -> &JSGlobalObject { self.global_this }
+    fn global_this(&self) -> &JSGlobalObject {
+        self.global_this
+    }
     #[inline]
-    fn indent_inc(&mut self) { self.indent += 1; }
+    fn indent_inc(&mut self) {
+        self.indent += 1;
+    }
     #[inline]
-    fn indent_dec(&mut self) { self.indent = self.indent.saturating_sub(1); }
+    fn indent_dec(&mut self) {
+        self.indent = self.indent.saturating_sub(1);
+    }
     #[inline]
-    fn reset_line(&mut self) { Formatter::reset_line(self) }
+    fn reset_line(&mut self) {
+        Formatter::reset_line(self)
+    }
     fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
         let mut sink = bun_io::FmtAdapter::new(writer);
         Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
@@ -2893,11 +3081,17 @@ pub trait AsymmetricMatcherFormatter {
 
 impl AsymmetricMatcherFormatter for Formatter<'_> {
     #[inline]
-    fn amf_add_for_new_line(&mut self, n: usize) { self.add_for_new_line(n); }
+    fn amf_add_for_new_line(&mut self, n: usize) {
+        self.add_for_new_line(n);
+    }
     #[inline]
-    fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
+    fn amf_global_this(&self) -> &JSGlobalObject {
+        self.global_this
+    }
     #[inline]
-    fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    fn amf_quote_strings(&mut self) -> &mut bool {
+        &mut self.quote_strings
+    }
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2915,11 +3109,17 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
 
 impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     #[inline]
-    fn amf_add_for_new_line(&mut self, n: usize) { self.add_for_new_line(n); }
+    fn amf_add_for_new_line(&mut self, n: usize) {
+        self.add_for_new_line(n);
+    }
     #[inline]
-    fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
+    fn amf_global_this(&self) -> &JSGlobalObject {
+        self.global_this
+    }
     #[inline]
-    fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    fn amf_quote_strings(&mut self) -> &mut bool {
+        &mut self.quote_strings
+    }
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2929,7 +3129,10 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     ) -> JsResult<()> {
         let global = self.global_this;
         self.format::<C>(
-            bun_jsc::console_object::formatter::TagResult { tag: tag.into(), cell },
+            bun_jsc::console_object::formatter::TagResult {
+                tag: tag.into(),
+                cell,
+            },
             w,
             v,
             global,
@@ -3015,12 +3218,10 @@ impl JestPrettyFormat {
             this.amf_add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
-            else {
+            let Some(number_value) = expect_js::close_to::number_value_get_cached(value) else {
                 return Ok(true);
             };
-            let Some(digits_value) = expect_js::close_to::digits_value_get_cached(value)
-            else {
+            let Some(digits_value) = expect_js::close_to::digits_value_get_cached(value) else {
                 return Ok(true);
             };
 
@@ -3043,8 +3244,7 @@ impl JestPrettyFormat {
                 if digits == 1 { "" } else { "s" },
             ));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-            let Some(object_value) =
-                expect_js::object_containing::object_value_get_cached(value)
+            let Some(object_value) = expect_js::object_containing::object_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -3059,7 +3259,10 @@ impl JestPrettyFormat {
                 writer.write_all(b"ObjectContaining ");
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
+                bun_jsc::FormatTag::Object,
+                &mut *writer.ctx,
+                object_value,
+                JSType::Object,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
@@ -3078,11 +3281,13 @@ impl JestPrettyFormat {
                 writer.write_all(b"StringContaining ");
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
+                bun_jsc::FormatTag::String,
+                &mut *writer.ctx,
+                substring_value,
+                JSType::String,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
-            else {
+            let Some(test_value) = expect_js::string_matching::test_value_get_cached(value) else {
                 return Ok(true);
             };
 
@@ -3101,25 +3306,29 @@ impl JestPrettyFormat {
                 *this.amf_quote_strings() = false;
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
+                bun_jsc::FormatTag::String,
+                &mut *writer.ctx,
+                test_value,
+                JSType::String,
             )?;
             *this.amf_quote_strings() = original_quote_strings;
-        } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
+        } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>()
+        {
             let printed = expect::ExpectCustomAsymmetricMatcher::custom_print(
-                instance, value, this.amf_global_this(), &mut *writer.ctx, true,
+                instance,
+                value,
+                this.amf_global_this(),
+                &mut *writer.ctx,
+                true,
             )
             .expect("unreachable");
             if !printed {
                 // default print (non-overridden by user)
                 let flags = instance.flags;
-                let Some(args_value) =
-                    expect_js::custom::captured_args_get_cached(value)
-                else {
+                let Some(args_value) = expect_js::custom::captured_args_get_cached(value) else {
                     return Ok(true);
                 };
-                let Some(matcher_fn) =
-                    expect_js::custom::matcher_fn_get_cached(value)
-                else {
+                let Some(matcher_fn) = expect_js::custom::matcher_fn_get_cached(value) else {
                     return Ok(true);
                 };
                 let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
@@ -3133,7 +3342,10 @@ impl JestPrettyFormat {
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
                 this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
+                    bun_jsc::FormatTag::Array,
+                    &mut *writer.ctx,
+                    args_value,
+                    JSType::Array,
                 )?;
             }
         } else {

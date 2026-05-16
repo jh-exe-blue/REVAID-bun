@@ -162,7 +162,10 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    bun_core::assertf!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    bun_core::assertf!(
+        value.is_empty() == global_this.has_exception(),
+        "host fn return/exception state mismatch"
+    );
 }
 
 pub fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -195,11 +198,15 @@ pub trait IntoHostFnReturn {
 }
 impl IntoHostFnReturn for JSValue {
     #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> { Ok(self) }
+    fn into_host_fn_return(self) -> JsResult<JSValue> {
+        Ok(self)
+    }
 }
 impl IntoHostFnReturn for JsResult<JSValue> {
     #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> { self }
+    fn into_host_fn_return(self) -> JsResult<JSValue> {
+        self
+    }
 }
 
 /// Normalize a setter body's return type to `JsResult<()>`. Zig setters return
@@ -209,11 +216,15 @@ pub trait IntoHostSetterReturn {
 }
 impl IntoHostSetterReturn for () {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { Ok(()) }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        Ok(())
+    }
 }
 impl IntoHostSetterReturn for JsResult<()> {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { self }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        self
+    }
 }
 // Some Zig setters return `bool` directly (e.g. `Image.setBackend`): the
 // generated Zig thunk passes the bool through to C++ with no exception-scope
@@ -231,7 +242,9 @@ impl IntoHostSetterReturn for bool {
 }
 impl IntoHostSetterReturn for JsResult<bool> {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { self.map(|_| ()) }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        self.map(|_| ())
+    }
 }
 
 /// Normalize a constructor body's return type to a nullable `*mut c_void`.
@@ -240,7 +253,9 @@ pub trait IntoHostConstructReturn {
 }
 impl<T> IntoHostConstructReturn for *mut T {
     #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> { Ok(self.cast()) }
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        Ok(self.cast())
+    }
 }
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
@@ -250,7 +265,9 @@ impl<T> IntoHostConstructReturn for Box<T> {
 }
 impl<T> IntoHostConstructReturn for JsResult<*mut T> {
     #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> { self.map(|p| p.cast()) }
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        self.map(|p| p.cast())
+    }
 }
 impl<T> IntoHostConstructReturn for JsResult<Box<T>> {
     #[inline]
@@ -403,8 +420,12 @@ pub fn host_fn_static_raw<R: IntoHostFnReturn>(
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    let (global, callframe) = unsafe {
+        (
+            JSGlobalObject::opaque_ref_nn(global),
+            CallFrame::opaque_ref_nn(callframe),
+        )
+    };
     host_fn_static(global, callframe, f)
 }
 
@@ -417,8 +438,12 @@ pub fn host_fn_static_passthrough_raw(
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    let (global, callframe) = unsafe {
+        (
+            JSGlobalObject::opaque_ref_nn(global),
+            CallFrame::opaque_ref_nn(callframe),
+        )
+    };
     host_fn_static_passthrough(global, callframe, f)
 }
 
@@ -728,7 +753,7 @@ pub fn from_js_host_call_generic<R>(
     // about whether an exception was thrown.
     //
     // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
-    // negative trait bound or specialization — neither stable). Phase B: sealed trait trick.
+    // negative trait bound or specialization — neither stable). A sealed-trait trick could enforce this.
     crate::call_check_slow(global_this, f)
 }
 
@@ -749,7 +774,10 @@ struct ParsedHostFunctionErrorSet {
 // string in Zig) is dropped; the macro embeds the function name in its own error message.
 #[allow(dead_code)]
 const fn parse_error_set(errors: &[&str]) -> ParsedHostFunctionErrorSet {
-    let mut errs = ParsedHostFunctionErrorSet { out_of_memory: false, js_error: false };
+    let mut errs = ParsedHostFunctionErrorSet {
+        out_of_memory: false,
+        js_error: false,
+    };
     let mut i = 0;
     while i < errors.len() {
         if bun_collections::const_str_eq(errors[i], "OutOfMemory") {
@@ -909,21 +937,51 @@ impl Default for DomEffect {
 
 impl DomEffect {
     pub const TOP: DomEffect = DomEffect {
-        reads: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-        writes: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
+        reads: [
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+        ],
+        writes: [
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+            DomEffectId::Heap,
+        ],
     };
 
     pub const fn for_read(read: DomEffectId) -> DomEffect {
         DomEffect {
-            reads: [read, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-            writes: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
+            reads: [
+                read,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+            ],
+            writes: [
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+            ],
         }
     }
 
     pub const fn for_write(read: DomEffectId) -> DomEffect {
         DomEffect {
-            writes: [read, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
-            reads: [DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap, DomEffectId::Heap],
+            writes: [
+                read,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+            ],
+            reads: [
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+                DomEffectId::Heap,
+            ],
         }
     }
 

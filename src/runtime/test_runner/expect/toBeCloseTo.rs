@@ -1,5 +1,6 @@
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
 
 use super::Expect;
 use super::get_signature;
@@ -34,14 +35,22 @@ impl Expect {
         if arguments.len() > 1 {
             let precision_ = arguments[1];
             if !precision_.is_number() {
-                return Err(global.throw_invalid_argument_type("toBeCloseTo", "precision", "number"));
+                return Err(global.throw_invalid_argument_type(
+                    "toBeCloseTo",
+                    "precision",
+                    "number",
+                ));
             }
 
             precision = precision_.as_number();
         }
 
-        let received_: JSValue =
-            this.get_value(global, this_value, "toBeCloseTo", "<green>expected<r>, precision")?;
+        let received_: JSValue = this.get_value(
+            global,
+            this_value,
+            "toBeCloseTo",
+            "<green>expected<r>, precision",
+        )?;
         if !received_.is_number() {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
@@ -101,9 +110,9 @@ impl Expect {
             RECEIVED_DIFFERENCE,
         );
 
-        // TODO(port): Zig `this.throw(global, signature, fmt, .{args})` passes fmt-string + tuple
-        // separately. Rust `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot be
-        // threaded as a runtime arg. Phase B: decide `Expect::throw` signature — likely
+        // TODO(refactor): Zig `this.throw(global, signature, fmt, .{args})` passes fmt-string +
+        // tuple separately. Rust `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot
+        // be threaded as a runtime arg. Decide `Expect::throw` signature — likely
         // `fn throw(&self, &JSGlobalObject, &str, fmt::Arguments) -> JsResult<JSValue>` and inline
         // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {

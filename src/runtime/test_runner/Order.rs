@@ -13,7 +13,7 @@ pub struct Order {
     // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
     // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
     // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership in Phase B.
+    // clones were bulk-freed by the arena; revisit ownership.
     pub previous_group_was_concurrent: bool,
     pub cfg: Config,
 }
@@ -39,7 +39,10 @@ impl Order {
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub fn generate_all_order(
+        &mut self,
+        entries: &[Box<ExecutionEntry>],
+    ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
             // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers).
@@ -53,23 +56,24 @@ impl Order {
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(entry_box);
             unsafe {
-                if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
+                if bun_core::Environment::CI_ASSERT
+                    && (*entry).added_in_phase != AddedInPhase::Preload
+                {
                     debug_assert!((*entry).next.is_none());
                 }
                 (*entry).next = None;
                 (*entry).failure_skip_past = None;
             }
             let sequences_start = self.sequences.len();
-            self.sequences.push(ExecutionSequence::init(
-                NonNull::new(entry),
-                None,
-                0,
-                0,
-            )); // add sequence to concurrentgroup
+            self.sequences
+                .push(ExecutionSequence::init(NonNull::new(entry), None, 0, 0)); // add sequence to concurrentgroup
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
-            self.groups
-                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
+            self.groups.push(ConcurrentGroup::init(
+                sequences_start,
+                sequences_end,
+                failure_skip_to,
+            )); // add a new concurrentgroup to order
             self.previous_group_was_concurrent = false;
         }
         let end = self.groups.len();
@@ -141,12 +145,13 @@ impl Order {
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
-                    // TODO(port): ownership — heap::alloc leaks without the arena; Phase B must
-                    // decide whether test_runner keeps an arena or tracks these for cleanup.
+                    // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
+                    // test_runner keeps an arena or tracks these for cleanup.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned =
+                        bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
                 }
@@ -167,7 +172,8 @@ impl Order {
                     // PERF(port): was arena bulk-free — see note above.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
                     let src: *const ExecutionEntry = &raw const **entry;
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned =
+                        bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
                 parent = p.base.parent;
@@ -231,8 +237,11 @@ impl Order {
             }
         }
         let failure_skip_to = self.groups.len() + 1;
-        self.groups
-            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
+        self.groups.push(ConcurrentGroup::init(
+            sequences_start,
+            sequences_end,
+            failure_skip_to,
+        )); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
 }
@@ -347,7 +356,8 @@ impl EntryList {
         if let Some(last) = self.last {
             // SAFETY: `last` was stored by a prior prepend/append and is still live.
             let last_ref = unsafe { &mut *last };
-            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload {
+            if bun_core::Environment::CI_ASSERT && last_ref.added_in_phase != AddedInPhase::Preload
+            {
                 debug_assert!(last_ref.next.is_none());
             }
             last_ref.next = Some(current);

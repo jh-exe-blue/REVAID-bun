@@ -2,10 +2,10 @@ use core::mem::offset_of;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::timer::{self, ElTimespec, EventLoopTimer, EventLoopTimerState, InHeap, TimerHeap};
 use bun_core::Environment;
 use bun_core::Timespec;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
-use crate::timer::{self, ElTimespec, EventLoopTimer, EventLoopTimerState, InHeap, TimerHeap};
 
 // TODO(port): move to test_runner_sys / jsc_sys
 unsafe extern "C" {
@@ -24,7 +24,10 @@ pub struct FakeTimers {
 
 impl Default for FakeTimers {
     fn default() -> Self {
-        Self { active: false, timers: TimerHeap::default() }
+        Self {
+            active: false,
+            timers: TimerHeap::default(),
+        }
     }
 }
 
@@ -37,7 +40,10 @@ pub struct CurrentTime {
     date_now_offset: AtomicU64,
 }
 
-const MIN_TIMESPEC: Timespec = Timespec { sec: i64::MIN, nsec: i64::MIN };
+const MIN_TIMESPEC: Timespec = Timespec {
+    sec: i64::MIN,
+    nsec: i64::MIN,
+};
 
 pub static CURRENT_TIME: CurrentTime = CurrentTime {
     offset_raw: RwLock::new(MIN_TIMESPEC),
@@ -67,7 +73,8 @@ impl CurrentTime {
         let mut date_now_offset = f64::from_bits(self.date_now_offset.load(Ordering::Relaxed));
         if let Some(js) = js {
             date_now_offset = js.floor() - timespec_ms;
-            self.date_now_offset.store(date_now_offset.to_bits(), Ordering::Relaxed);
+            self.date_now_offset
+                .store(date_now_offset.to_bits(), Ordering::Relaxed);
         }
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, date_now_offset + timespec_ms);
@@ -119,15 +126,21 @@ fn timers_lock_guard() -> bun_threading::MutexGuard {
 }
 
 /// Convert `bun_core::Timespec` → the low-tier `bun_event_loop` Timespec stub
-/// (same `{sec,nsec}` shape, different nominal type until B-2 unifies them).
+/// (same `{sec,nsec}` shape, different nominal type until they are unified).
 #[inline]
 fn to_el_timespec(t: &Timespec) -> ElTimespec {
-    ElTimespec { sec: t.sec, nsec: t.nsec }
+    ElTimespec {
+        sec: t.sec,
+        nsec: t.nsec,
+    }
 }
 
 #[inline]
 fn from_el_timespec(t: &ElTimespec) -> Timespec {
-    Timespec { sec: t.sec, nsec: t.nsec }
+    Timespec {
+        sec: t.sec,
+        nsec: t.nsec,
+    }
 }
 
 impl FakeTimers {
@@ -231,7 +244,13 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        unsafe {
+            EventLoopTimer::fire(
+                next,
+                &now_el,
+                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast(),
+            )
+        };
     }
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) {
@@ -254,7 +273,8 @@ impl FakeTimers {
                 // bun.assert always evaluates its arg; debug_assert! does NOT in release.
                 // Hoist the side-effecting delete_min() out so the timer is removed in all builds.
                 // SAFETY: as above.
-                let min = unsafe { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
+                let min =
+                    unsafe { (*timers).fake_timers.timers.delete_min() }.expect("unreachable");
                 debug_assert!(core::ptr::eq(min, peek));
                 break 'blk min;
             };
@@ -355,9 +375,9 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             } else if now.is_date() {
                 js_now = now.get_unix_timestamp();
             } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a number or Date"
-                )));
+                return Err(
+                    global.throw_invalid_arguments(format_args!("'now' must be a number or Date"))
+                );
             }
         }
     }
@@ -503,9 +523,17 @@ fn is_fake_timers(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
 const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("useFakeTimers", 0, __jsc_host_use_fake_timers),
     ("useRealTimers", 0, __jsc_host_use_real_timers),
-    ("advanceTimersToNextTimer", 0, __jsc_host_advance_timers_to_next_timer),
+    (
+        "advanceTimersToNextTimer",
+        0,
+        __jsc_host_advance_timers_to_next_timer,
+    ),
     ("advanceTimersByTime", 1, __jsc_host_advance_timers_by_time),
-    ("runOnlyPendingTimers", 0, __jsc_host_run_only_pending_timers),
+    (
+        "runOnlyPendingTimers",
+        0,
+        __jsc_host_run_only_pending_timers,
+    ),
     ("runAllTimers", 0, __jsc_host_run_all_timers),
     ("getTimerCount", 0, __jsc_host_get_timer_count),
     ("clearAllTimers", 0, __jsc_host_clear_all_timers),

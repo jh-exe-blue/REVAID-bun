@@ -1,8 +1,9 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
+use bun_jsc::console_object::Formatter;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_been_called_times(
@@ -51,8 +52,8 @@ pub fn to_have_been_called_times(
             ),
             format_args!("{}, {}", times, calls.get_length(global)?),
         );
-        // TODO(port): Expect.throw signature — Zig passes (fmt_literal, args_tuple); Rust side
-        // likely wants a single format_args!. Reconcile in Phase B.
+        // TODO(refactor): Expect.throw signature — Zig passes (fmt_literal, args_tuple); Rust
+        // side likely wants a single format_args!. Reconcile.
     }
 
     let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);

@@ -35,20 +35,21 @@
 //! ]
 //! ```
 
+#[allow(unused_imports)]
+use crate::test_runner::expect::{JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
 use core::ptr::NonNull;
-#[allow(unused_imports)] use crate::test_runner::expect::{JSValueTestExt, JSGlobalObjectTestExt, make_formatter};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::{JSGlobalObject, JsResult};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
+use bun_jsc::virtual_machine::VirtualMachine;
 
-use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, Phase, RefDataValue, ScopeMode, StepResult,
+    AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry, HandleUncaughtExceptionResult,
+    Order, Phase, RefDataValue, ScopeMode, StepResult, group_begin,
 };
+use super::debug::group as group_log; // bun_test.debug.group
 use crate::cli::test_command;
 
 // ── local shims for upstream Timespec methods not yet ported ───────────────
@@ -372,10 +373,15 @@ impl Execution {
                     group_log::log(format_args!(
                         "runOneCompleted: the data is outdated, invalid, or did not know the sequence",
                     ));
-                    return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+                    return Ok(StepResult::Waiting {
+                        timeout: Timespec::EPOCH,
+                    });
                 };
                 let sequence_index = match &data {
-                    RefDataValue::Execution { entry_data: Some(ed), .. } => ed.sequence_index,
+                    RefDataValue::Execution {
+                        entry_data: Some(ed),
+                        ..
+                    } => ed.sequence_index,
                     // get_current_and_valid_execution_sequence returned Some ⇒ data is Execution with entry_data
                     _ => unreachable!(),
                 };
@@ -385,8 +391,13 @@ impl Execution {
                 debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
-                let sequence_result =
-                    step_sequence(&buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
+                let sequence_result = step_sequence(
+                    &buntest_strong,
+                    global_this,
+                    group_ptr,
+                    sequence_index,
+                    &mut now,
+                )?;
                 match sequence_result {
                     AdvanceSequenceStatus::Done => {}
                     AdvanceSequenceStatus::Execute { timeout } => {
@@ -427,7 +438,9 @@ impl Execution {
                 if unsafe { group_ptr.as_ref() }.remaining_incomplete_entries == 0 {
                     return step_group(&buntest_strong, global_this, &mut now);
                 }
-                return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
+                return Ok(StepResult::Waiting {
+                    timeout: Timespec::EPOCH,
+                });
             }
         }
     }
@@ -459,7 +472,11 @@ impl Execution {
 
         group_log::log(format_args!("runOneCompleted: data: {}", data));
 
-        let RefDataValue::Execution { group_index, entry_data } = data else {
+        let RefDataValue::Execution {
+            group_index,
+            entry_data,
+        } = data
+        else {
             group_log::log(format_args!("runOneCompleted: the data is not execution"));
             return None;
         };
@@ -473,18 +490,24 @@ impl Execution {
         // `self.groups`, so equality is exactly `group_index == self.group_index`. Comparing the
         // index avoids materializing a `&mut BunTest` that would alias `&mut self`.
         if self.group_index >= self.groups.len() || *group_index != self.group_index {
-            group_log::log(format_args!("runOneCompleted: the data is for a different group"));
+            group_log::log(format_args!(
+                "runOneCompleted: the data is for a different group"
+            ));
             return None;
         }
         if *group_index >= self.groups.len() {
-            group_log::log(format_args!("runOneCompleted: the data did not know the group"));
+            group_log::log(format_args!(
+                "runOneCompleted: the data did not know the group"
+            ));
             return None;
         }
         // Disjoint split-borrow of `self.groups` and `self.sequences`.
         let group = &mut self.groups[*group_index];
         let seq_abs = group.sequence_start + entry_data.sequence_index;
         if seq_abs >= group.sequence_end {
-            group_log::log(format_args!("runOneCompleted: the data did not know the sequence"));
+            group_log::log(format_args!(
+                "runOneCompleted: the data did not know the sequence"
+            ));
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
@@ -504,7 +527,9 @@ impl Execution {
             ));
             return None;
         }
-        group_log::log(format_args!("runOneCompleted: the data is valid and current"));
+        group_log::log(format_args!(
+            "runOneCompleted: the data is valid and current"
+        ));
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
@@ -683,7 +708,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (Phase B: reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,
@@ -863,8 +888,11 @@ pub fn step_group(
         Execution::on_group_completed(global_this);
 
         // if there is one sequence and it failed, skip to the next group
-        let (start, end, failure_skip_to) =
-            (group.sequence_start, group.sequence_end, group.failure_skip_to);
+        let (start, end, failure_skip_to) = (
+            group.sequence_start,
+            group.sequence_end,
+            group.failure_skip_to,
+        );
         let all_failed = 'blk: {
             for sequence in this.sequences[start..end].iter() {
                 if !sequence.result.is_fail() {
@@ -880,7 +908,9 @@ pub fn step_group(
             ));
             this.group_index = failure_skip_to;
         } else {
-            group_log::log(format_args!("stepGroup: not all sequences failed, advancing to next group"));
+            group_log::log(format_args!(
+                "stepGroup: not all sequences failed, advancing to next group"
+            ));
             this.group_index += 1;
         }
     }
@@ -951,8 +981,7 @@ fn step_sequence(
     now: &mut Timespec,
 ) -> JsResult<AdvanceSequenceStatus> {
     loop {
-        if let Some(r) =
-            step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
+        if let Some(r) = step_sequence_one(buntest_strong, global_this, group, sequence_index, now)?
         {
             return Ok(r);
         }
@@ -1025,7 +1054,10 @@ fn step_sequence_one(
                 remaining_repeat_count: sequence.remaining_repeat_count as i64,
             }),
         };
-        group_log::log(format_args!("runSequence queued callback: {}", callback_data));
+        group_log::log(format_args!(
+            "runSequence queued callback: {}",
+            callback_data
+        ));
 
         if BunTest::run_test_callback(
             buntest_strong.clone(),
@@ -1071,9 +1103,7 @@ fn step_sequence_one(
                 group_log::log(format_args!(
                     "runSequence: no callback for sequence_index {} (entry_index {:x})",
                     sequence_index,
-                    sequence
-                        .active_entry
-                        .map_or(0, |p| p.as_ptr() as usize)
+                    sequence.active_entry.map_or(0, |p| p.as_ptr() as usize)
                 ));
                 debug_assert!(false);
             }

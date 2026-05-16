@@ -1,8 +1,9 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
+use bun_jsc::console_object::Formatter;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_be_array_of_size(
@@ -19,7 +20,9 @@ pub fn to_be_array_of_size(
     let arguments = &_arguments.ptr[0.._arguments.len];
 
     if arguments.len() < 1 {
-        return Err(global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument")));
+        return Err(
+            global.throw_invalid_arguments(format_args!("toBeArrayOfSize() requires 1 argument"))
+        );
     }
 
     let value: JSValue = this.get_value(global, this_value, "toBeArrayOfSize", "")?;
@@ -28,7 +31,9 @@ pub fn to_be_array_of_size(
     size.ensure_still_alive();
 
     if !size.is_any_int() {
-        return Err(global.throw(format_args!("toBeArrayOfSize() requires the first argument to be a number")));
+        return Err(global.throw(format_args!(
+            "toBeArrayOfSize() requires the first argument to be a number"
+        )));
     }
 
     this.increment_expect_call_counter();
@@ -49,7 +54,7 @@ pub fn to_be_array_of_size(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        // PERF(port): was comptime getSignature — profile in Phase B
+        // PERF(port): was comptime getSignature.
         let signature = get_signature("toBeArrayOfSize", "", true);
         return this.throw_fmt(
             global,
@@ -59,7 +64,7 @@ pub fn to_be_array_of_size(
         );
     }
 
-    // PERF(port): was comptime getSignature — profile in Phase B
+    // PERF(port): was comptime getSignature.
     let signature = get_signature("toBeArrayOfSize", "", false);
     this.throw_fmt(
         global,

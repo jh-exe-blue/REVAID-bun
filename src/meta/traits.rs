@@ -12,8 +12,8 @@
 //! See PORTING.md §"Comptime reflection".
 
 // TODO(port): every predicate here relied on `@typeInfo`. The trait-based encoding below
-// is a reshape, not a 1:1 translation. Phase B must audit each call site of
-// `bun.meta.is*` and confirm the trait bound (or specialization) matches the Zig branch.
+// is a reshape, not a 1:1 translation. Audit each call site of `bun.meta.is*` and
+// confirm the trait bound (or specialization) matches the Zig branch.
 
 // ──────────────────────────────────────────────────────────────────────────────
 // isZigString
@@ -93,7 +93,9 @@ pub trait IsNumber {}
 macro_rules! impl_is_number {
     ($($t:ty),* $(,)?) => { $( impl IsNumber for $t {} )* };
 }
-impl_is_number!(u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64);
+impl_is_number!(
+    u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64
+);
 
 #[inline]
 pub const fn is_number<T: IsNumber>() -> bool {

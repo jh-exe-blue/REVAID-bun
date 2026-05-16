@@ -20,7 +20,7 @@ use crate::install::{self as Install, ExtractData, PackageManager};
 
 // TODO(port): bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local
 // storage so callers can return slices that outlive the access. Rust thread_local!
-// closures cannot express this without unsafe. Phase B should either (a) make
+// closures cannot express this without unsafe. TODO(refactor): either (a) make
 // try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
 // a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
 struct TlBufs {
@@ -39,7 +39,7 @@ thread_local! {
 }
 
 fn tl_bufs() -> *mut TlBufs {
-    // SAFETY (audited phase-d):
+    // SAFETY (audited):
     // - `TL_BUFS` is thread-local `Cell<*mut TlBufs>`: no cross-thread sharing; the
     //   pointer is `Copy` so `.get()/.set()` are zero-unsafe. The payload itself is a
     //   leaked heap alloc (lazy-init below), so the `*mut` stays valid for thread life.
@@ -130,7 +130,7 @@ impl SloppyGlobalGitConfig {
         let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
             bun_paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
-        // PERF(port): was stack-fallback alloc (4096) — profile in Phase B
+        // PERF(port): was stack-fallback alloc (4096)
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,

@@ -75,9 +75,7 @@ pub fn call_for_test(
 // `@call(.auto, func, args)`. Rust cannot forward an arbitrary heterogeneous
 // argument tuple without variadics; callers should wrap the invocation in a
 // closure. Return type uses bun_core::Error (see ExtErrType note above).
-pub fn call<T>(
-    func: impl FnOnce() -> Result<T, bun_core::Error>,
-) -> Result<T, bun_core::Error> {
+pub fn call<T>(func: impl FnOnce() -> Result<T, bun_core::Error>) -> Result<T, bun_core::Error> {
     let prev_ctx: Option<*const Context> = TOP_CTX.with(|c| c.get());
     // SAFETY: all-zero is a valid Context (CONTEXT / jmp_buf / ucontext_t are
     // #[repr(C)] POD with no NonNull/NonZero/enum fields).
@@ -114,7 +112,7 @@ unsafe extern "C" {
 mod musl {
     use core::ffi::c_int;
     // TODO(port): Zig used @cImport(@cInclude("setjmp.h")).jmp_buf — confirm
-    // exact musl jmp_buf size/align per target arch in Phase B. This is a
+    // exact musl jmp_buf size/align per target arch. This is a
     // STACK VALUE (`var ctx = std.mem.zeroes(Context); setjmp(&ctx)`), not an
     // opaque handle, so it must reserve real storage — a ZST would let setjmp
     // scribble past the allocation. 32×u64 over-reserves vs every musl arch.
@@ -146,7 +144,9 @@ unsafe fn get_context(ctx: *mut Context) {
         // Zig called std.debug.getContext(ctx) which wraps getcontext(3).
         // The `libc` crate omits the binding on Darwin and the BSDs; declare
         // locally (uniform across all unix targets).
-        unsafe extern "C" { fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int; }
+        unsafe extern "C" {
+            fn getcontext(ucp: *mut libc::ucontext_t) -> core::ffi::c_int;
+        }
         // SAFETY: ctx is a valid, writable, properly-aligned ucontext_t (caller contract).
         let _ = unsafe { getcontext(ctx) };
     }
@@ -179,8 +179,8 @@ unsafe fn set_context(ctx: *const Context) -> ! {
 /// Install at root source file as `pub const panic = @import("recover").panic;`
 // TODO(port): Zig exposed this as `std.debug.FullPanic(handler)` — a type
 // installed at the root file as `pub const panic`. Rust has no equivalent
-// declarative panic-handler slot; Phase B should wire this via
-// `std::panic::set_hook` (or a `#[panic_handler]` in no_std) at startup.
+// declarative panic-handler slot; wire this via `std::panic::set_hook`
+// (or a `#[panic_handler]` in no_std) at startup.
 pub fn panic(msg: &[u8], first_trace_addr: Option<usize>) -> ! {
     panicked();
     // TODO(port): std.debug.defaultPanic — route to bun_core's default panic.

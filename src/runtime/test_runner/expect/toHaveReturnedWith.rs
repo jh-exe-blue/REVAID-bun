@@ -1,10 +1,12 @@
+#[allow(unused_imports)]
+use super::{BigIntCompare, JSGlobalObjectTestExt, JSValueTestExt, make_formatter};
+#[allow(unused_imports)]
+use bun_core::Output;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-#[allow(unused_imports)] use bun_core::Output;
 
 use super::DiffFormatter;
-use super::mock;
 use super::Expect;
+use super::mock;
 
 // TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub fn to_have_returned_with(
@@ -68,7 +70,8 @@ pub fn to_have_returned_with(
     let signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", false);
 
     if this.flags.get().not() {
-        let not_signature: &str = Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
+        let not_signature: &str =
+            Expect::get_signature("toHaveReturnedWith", "<green>expected<r>", true);
         return this.throw(
             global,
             not_signature,
@@ -127,7 +130,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
@@ -149,7 +152,7 @@ pub fn to_have_returned_with(
         // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
         // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
         // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`) — profile in Phase B
+        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
