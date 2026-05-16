@@ -612,33 +612,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         HiveOwned(self.get_init(value))
     }
 
-    /// Reconstruct an owned slot handle from a pointer that round-tripped
-    /// through a place that cannot carry the [`HiveOwned`] token (an intrusive
-    /// FIFO, a C callback `void*`, …). Prefer keeping the original
-    /// [`HiveOwned`] threaded through; reach for this only when the token
-    /// genuinely cannot cross the boundary.
-    ///
-    /// The pool argument is for documentation and intent — heap-fallback slots
-    /// cannot be validated against the inline buffer, so this only
-    /// `debug_assert`s the inline path.
-    ///
-    /// # Safety
-    /// `ptr` must have been vended by this `Fallback` (via `claim()` /
-    /// `get_init` / `get_owned`), the slot must still be claimed (not yet
-    /// `put()`), and no other live `HiveOwned` may reference the same slot.
-    #[inline]
-    pub unsafe fn assume_owned(&self, ptr: NonNull<T>) -> HiveOwned<T> {
-        if CAPACITY > 0 && self.hive.r#in(ptr.as_ptr()) {
-            debug_assert!(
-                self.hive
-                    .index_of(ptr.as_ptr())
-                    .is_some_and(|i| self.hive.used.is_set(i as usize)),
-                "Fallback::assume_owned on an unclaimed inline slot"
-            );
-        }
-        HiveOwned(ptr)
-    }
-
     /// See [`HiveArray::emplace`]. Infallible (heap fallback).
     #[inline]
     pub fn emplace(&mut self, init: impl FnOnce(NonNull<T>) -> T) -> NonNull<T> {
