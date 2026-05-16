@@ -603,7 +603,7 @@ pub fn open_file(path_: &[u8], mode: OpenMode) -> Result<bun_sys::File, bun_core
     }
 }
 
-pub fn open_dir(dir: bun_sys::Dir, path_: &bun_core::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
+pub fn open_dir(dir: &bun_sys::Dir, path_: &bun_core::ZStr) -> Result<bun_sys::Dir, bun_core::Error> {
     #[cfg(windows)]
     {
         let res = sys::open_dir_at_windows_a(
@@ -641,7 +641,7 @@ pub fn open_dir_no_renaming_or_deleting_windows(
     Ok(res.std_dir())
 }
 
-pub fn open_dir_a(dir: bun_sys::Dir, path_: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
+pub fn open_dir_a(dir: &bun_sys::Dir, path_: &[u8]) -> Result<bun_sys::Dir, bun_core::Error> {
     #[cfg(windows)]
     {
         let res = sys::open_dir_at_windows_a(
@@ -1238,7 +1238,7 @@ impl<Parent, const FIELD_OFFSET: usize> LazyBool<Parent, FIELD_OFFSET> {
 
 /// Like std.fs.Dir.makePath except instead of infinite looping on dangling
 /// symlink, it deletes the symlink and tries again.
-pub fn make_path(dir: bun_sys::Dir, sub_path: &[u8]) -> Result<(), bun_core::Error> {
+pub fn make_path(dir: &bun_sys::Dir, sub_path: &[u8]) -> Result<(), bun_core::Error> {
     let mut it = bun_paths::component_iterator(sub_path)?;
     let Some(mut component) = it.last() else { return Ok(()) };
     loop {
@@ -1275,7 +1275,7 @@ pub fn make_path(dir: bun_sys::Dir, sub_path: &[u8]) -> Result<(), bun_core::Err
 }
 
 /// Like make_path but accepts a UTF-16 path.
-pub fn make_path_w(dir: bun_sys::Dir, sub_path: &[u16]) -> Result<(), bun_core::Error> {
+pub fn make_path_w(dir: &bun_sys::Dir, sub_path: &[u16]) -> Result<(), bun_core::Error> {
     let mut buf = PathBuffer::uninit();
     let buf_len = bun_simdutf_sys::convert::utf16::to::utf8::le(sub_path, &mut buf);
     make_path(dir, &buf[..buf_len])

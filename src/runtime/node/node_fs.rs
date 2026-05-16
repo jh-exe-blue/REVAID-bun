@@ -7779,7 +7779,7 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::Directory)
+                zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::Directory)
             {
                 let mut errno: E = map_anyerror_to_errno(err);
                 if cfg!(windows) && errno == E::ENOTDIR {
@@ -7817,7 +7817,7 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) =
-                zig_delete_tree(sys::Dir::cwd(), resolved, sys::FileKind::File)
+                zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File)
             {
                 let errno = if err == bun_core::err!("FileNotFound") {
                     if args.force {
@@ -9089,7 +9089,7 @@ impl NodeFS {
                         windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS => {}
                         windows::Win32Error::PATH_NOT_FOUND => {
                             let _ = sys::make_path::make_path_u16(
-                                sys::Dir::cwd(),
+                                &sys::Dir::cwd(),
                                 paths::dirname_w(dest.as_slice()),
                             );
                             let second_try = unsafe {
@@ -9729,7 +9729,7 @@ fn dt_err(errno: E) -> bun_core::Error {
 }
 
 #[inline]
-fn dt_open_dir(parent: sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
+fn dt_open_dir(parent: &sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
     let mut path_buf = PathBuffer::uninit();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
@@ -9748,7 +9748,7 @@ fn dt_open_dir(parent: sys::Dir, name: &[u8]) -> Result<sys::Dir, E> {
 }
 
 #[inline]
-fn dt_delete_file(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
+fn dt_delete_file(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     let mut path_buf = PathBuffer::uninit();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
@@ -9790,7 +9790,7 @@ fn dt_delete_file(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
 }
 
 #[inline]
-fn dt_delete_dir(parent: sys::Dir, name: &[u8]) -> Result<(), E> {
+fn dt_delete_dir(parent: &sys::Dir, name: &[u8]) -> Result<(), E> {
     let mut path_buf = PathBuffer::uninit();
     let len = name.len().min(path_buf.len() - 1);
     path_buf[..len].copy_from_slice(&name[..len]);
@@ -9812,12 +9812,15 @@ struct DeleteTreeStackItem {
     /// borrows `sub_path` instead — see `name_is_borrowed`.
     name: Vec<u8>,
     name_is_borrowed: bool,
-    parent_dir: sys::Dir,
+    /// Non-owning alias of either `self_` (first item) or the previous stack
+    /// frame's `iter.iter.dir`. Ownership of the descriptor stays with the
+    /// owner; this is just the raw fd for `Dir::borrow` at call sites.
+    parent_dir: FD,
     iter: DirIterator::WrappedIterator,
 }
 
 pub fn zig_delete_tree(
-    self_: sys::Dir,
+    self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> Result<(), bun_core::Error> {
@@ -9843,8 +9846,9 @@ pub fn zig_delete_tree(
     stack.push(DeleteTreeStackItem {
         name: Vec::new(),
         name_is_borrowed: true,
-        parent_dir: self_,
-        iter: DirIterator::WrappedIterator::init(initial_iterable_dir.fd),
+        parent_dir: self_.fd,
+        // Hand off the fd: the stack item (via `close_all`) owns it from here.
+        iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
     });
 
     'process_stack: while !stack.is_empty() {
@@ -9866,14 +9870,17 @@ pub fn zig_delete_tree(
             'handle_entry: loop {
                 if treat_as_dir {
                     if stack.len() < stack.capacity() {
-                        let top_dir = sys::Dir::from_fd(stack[top_idx].iter.iter.dir);
-                        match dt_open_dir(top_dir, &entry_name) {
+                        let top_fd = stack[top_idx].iter.iter.dir;
+                        match dt_open_dir(sys::Dir::borrow(&top_fd), &entry_name) {
                             Ok(iterable_dir) => {
                                 stack.push(DeleteTreeStackItem {
                                     name: entry_name,
                                     name_is_borrowed: false,
-                                    parent_dir: top_dir,
-                                    iter: DirIterator::WrappedIterator::init(iterable_dir.fd),
+                                    parent_dir: top_fd,
+                                    // Hand off: stack item owns the fd via `close_all`.
+                                    iter: DirIterator::WrappedIterator::init(
+                                        iterable_dir.into_raw(),
+                                    ),
                                 });
                                 continue 'process_stack;
                             }
@@ -9884,17 +9891,17 @@ pub fn zig_delete_tree(
                             Err(e) => return Err(dt_err(e)),
                         }
                     } else {
-                        let top_dir = sys::Dir::from_fd(stack[top_idx].iter.iter.dir);
+                        let top_fd = stack[top_idx].iter.iter.dir;
                         zig_delete_tree_min_stack_size_with_kind_hint(
-                            top_dir,
+                            sys::Dir::borrow(&top_fd),
                             &entry_name,
                             entry.kind,
                         )?;
                         break 'handle_entry;
                     }
                 } else {
-                    let top_dir = sys::Dir::from_fd(stack[top_idx].iter.iter.dir);
-                    match dt_delete_file(top_dir, &entry_name) {
+                    let top_fd = stack[top_idx].iter.iter.dir;
+                    match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
                         Ok(()) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
@@ -9926,7 +9933,7 @@ pub fn zig_delete_tree(
         };
 
         let mut need_to_retry = false;
-        match dt_delete_dir(parent_dir, name) {
+        match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
             Ok(()) => {}
             Err(E::ENOENT) => {}
             Err(E::ENOTEMPTY) => need_to_retry = true,
@@ -9942,7 +9949,7 @@ pub fn zig_delete_tree(
             let mut treat_as_dir = true;
             let iterable_dir = 'handle_entry: loop {
                 if treat_as_dir {
-                    match dt_open_dir(parent_dir, name) {
+                    match dt_open_dir(sys::Dir::borrow(&parent_dir), name) {
                         Ok(d) => break 'handle_entry d,
                         Err(E::ENOTDIR) => {
                             treat_as_dir = false;
@@ -9955,7 +9962,7 @@ pub fn zig_delete_tree(
                         Err(e) => return Err(dt_err(e)),
                     }
                 } else {
-                    match dt_delete_file(parent_dir, name) {
+                    match dt_delete_file(sys::Dir::borrow(&parent_dir), name) {
                         Ok(()) => continue 'process_stack,
                         Err(E::ENOENT) => continue 'process_stack,
                         Err(E::EISDIR) => {
@@ -9979,7 +9986,8 @@ pub fn zig_delete_tree(
                 name: top.name,
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
-                iter: DirIterator::WrappedIterator::init(iterable_dir.fd),
+                // Hand off: stack item owns the fd via `close_all`.
+                iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
             });
             continue 'process_stack;
         }
@@ -9988,7 +9996,7 @@ pub fn zig_delete_tree(
 }
 
 fn zig_delete_tree_open_initial_subpath(
-    self_: sys::Dir,
+    self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> Result<Option<sys::Dir>, bun_core::Error> {
@@ -10017,7 +10025,7 @@ fn zig_delete_tree_open_initial_subpath(
 }
 
 fn zig_delete_tree_min_stack_size_with_kind_hint(
-    self_: sys::Dir,
+    self_: &sys::Dir,
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> Result<(), bun_core::Error> {
@@ -10027,7 +10035,6 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             None => return Ok(()),
         };
         let mut cleanup_dir_parent: Option<sys::Dir> = None;
-        let mut cleanup_dir = true;
 
         // Valid use of MAX_PATH_BYTES because dir_name_buf will only
         // ever store a single path component that was returned from the
@@ -10056,11 +10063,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
                 'handle_entry: loop {
                     if treat_as_dir {
-                        match dt_open_dir(dir, &entry_name) {
+                        match dt_open_dir(&dir, &entry_name) {
                             Ok(new_dir) => {
-                                if let Some(d) = cleanup_dir_parent.take() {
-                                    d.close();
-                                }
+                                // Reassignment drops (and thus closes) the old
+                                // grandparent `Dir`, if any.
                                 cleanup_dir_parent = Some(dir);
                                 dir = new_dir;
                                 let n = entry_name.len().min(dir_name_buf.len());
@@ -10080,7 +10086,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                             Err(e) => break 'scan_dir Err(dt_err(e)),
                         }
                     } else {
-                        match dt_delete_file(dir, &entry_name) {
+                        match dt_delete_file(&dir, &entry_name) {
                             Ok(()) => continue 'dir_it,
                             Err(E::ENOENT) => continue 'dir_it,
                             Err(E::EISDIR) => {
@@ -10102,22 +10108,21 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             // Reached the end of the directory entries, which means we successfully deleted all of them.
             // Now to remove the directory itself.
             dir.close();
-            cleanup_dir = false;
 
             let dir_name: &[u8] = if dir_name_is_sub_path {
                 sub_path
             } else {
                 &dir_name_buf[..dir_name_len]
             };
+            // `d` (and `dir`, already closed above) drop at the end of each
+            // arm below, so no explicit close is needed.
             if let Some(d) = cleanup_dir_parent {
-                match dt_delete_dir(d, dir_name) {
+                match dt_delete_dir(&d, dir_name) {
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
-                        d.close();
                         continue 'start_over;
                     }
                     Err(e) => {
-                        d.close();
                         return Err(dt_err(e));
                     }
                 }
@@ -10129,13 +10134,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 }
             }
         };
-        // defers
-        if let Some(d) = cleanup_dir_parent {
-            d.close();
-        }
-        if cleanup_dir {
-            dir.close();
-        }
+        // `dir` and `cleanup_dir_parent` (if still owned) close on Drop here.
         return result;
     }
 }
