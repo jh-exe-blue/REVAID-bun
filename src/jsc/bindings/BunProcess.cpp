@@ -454,7 +454,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 #else
 #define StandaloneModuleGraph__base_path "/$bunfs/"_s
 #endif
+#if OS(WINDOWS)
     bool deleteAfter = false;
+#endif
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
         if (Bun__resolveEmbeddedNodeFile(globalObject->bunVM(), &bunStr)) {
@@ -475,8 +477,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
 
     RETURN_IF_EXCEPTION(scope, {});
 
-    const auto tryToDeleteIfNecessary = [&]() {
 #if OS(WINDOWS)
+    const auto tryToDeleteIfNecessary = [&]() {
         if (deleteAfter) {
             // Only call it once
             deleteAfter = false;
@@ -500,10 +502,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
                 delete[] dupeZ;
             }
         }
-#else
-        (void)deleteAfter;
-#endif
     };
+#endif
 
     // Handle known yet-to-be-working in Bun
     {
@@ -535,8 +535,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     CrashHandler__setDlOpenAction(utf8.data());
     void* handle = dlopen(utf8.data(), RTLD_LAZY);
     CrashHandler__setDlOpenAction(nullptr);
-
-    tryToDeleteIfNecessary();
 #endif
 
     globalObject->m_pendingNapiModuleDlopenHandle = handle;
