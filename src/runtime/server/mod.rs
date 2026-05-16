@@ -711,7 +711,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let ctx: *mut ServerRequestContext<SSL, DEBUG> = unsafe {
             (*pool)
                 .get_init(ServerRequestContext::<SSL, DEBUG>::new(
-                    this,
+                    core::ptr::NonNull::from(&*server),
                     std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                     any_response_from::<SSL>(resp),
                     should_deinit_context,

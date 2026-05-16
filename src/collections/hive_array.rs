@@ -481,6 +481,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 /// There is no `Drop`: dropping a `HiveOwned` is a no-op (the slot stays
 /// claimed). Recycling is the explicit [`Fallback::put`] step, matching the
 /// existing pool protocol.
+#[must_use = "dropping a HiveOwned without put() leaks the pool slot"]
 pub struct HiveOwned<T>(NonNull<T>);
 
 impl<T> HiveOwned<T> {

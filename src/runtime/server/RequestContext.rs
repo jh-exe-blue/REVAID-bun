@@ -1306,8 +1306,14 @@ where
     /// Build a fully-initialized `RequestContext` by value. The pool slot is
     /// claimed and written via the safe `Fallback::get_init`; no caller forms
     /// `&mut`/`*mut` over uninitialized storage.
+    ///
+    /// `server` is `NonNull` — every dispatch path constructs from a live
+    /// `&Self::Server` (or its registered raw user-data pointer), so the
+    /// constructor never sees null. The field stays `Option` because
+    /// [`Self::deinit`] `take()`s it to mark the slot as torn down before pool
+    /// recycle.
     pub fn new(
-        server: *const ThisServer,
+        server: NonNull<ThisServer>,
         req: *mut Req<SSL_ENABLED, HTTP3>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -1320,7 +1326,7 @@ where
             resp: Some(resp),
             req: Some(req),
             method: resolved_method,
-            server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
+            server: Some(bun_ptr::BackRef::from(server)),
             defer_deinit_until_callback_completes: should_deinit_context,
             range: RangeRequest::raw_from_request(&Self::any_request(req)),
             request_weakref: request::WeakRef::EMPTY,

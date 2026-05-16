@@ -115,7 +115,7 @@ where
 pub trait RequestCtxOps: RequestCtx {
     type Server;
     fn create(
-        server: *const Self::Server,
+        server: NonNull<Self::Server>,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -163,7 +163,7 @@ where
     type Server = ThisServer;
     #[inline]
     fn create(
-        server: *const ThisServer,
+        server: NonNull<ThisServer>,
         req: &mut Self::Req,
         resp: &mut Self::Resp,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -3119,7 +3119,7 @@ where
             );
         }
 
-        let self_ptr: *const Self = self;
+        let self_ptr: NonNull<Self> = NonNull::from(&*self);
         // Both pools are layout-identical across the `H3` const (it only affects
         // associated consts/types, not layout), so the server-owned pool pointer
         // can be reinterpreted to `Ctx`'s monomorphization with a safe
@@ -3410,7 +3410,7 @@ where
         let ctx = unsafe {
             &mut *(*pool)
                 .get_init(<ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create(
-                    self_ptr,
+                    NonNull::from(&*this),
                     req,
                     resp,
                     Some(bun_ptr::BackRef::new(&should_deinit_context)),
