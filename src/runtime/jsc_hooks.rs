@@ -4528,7 +4528,6 @@ pub(crate) fn resolve_embedded_file_to_buf(
             Some(st) => {
                 #[cfg(windows)]
                 {
-                    let _ = &st;
                     st.st_size as usize == file_contents.len()
                 }
                 #[cfg(unix)]
