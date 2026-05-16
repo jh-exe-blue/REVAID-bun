@@ -4575,12 +4575,11 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // is enough to trust; concurrent racers converge here too.
     if let Ok(st) = bun_sys::fstatat(dir_fd, tmpfilename) {
         if st.st_size as usize == file_contents.len() {
-            let result =
-                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-                    dir_path,
-                    out_buf,
-                    &[tmpfilename.as_bytes()],
-                );
+            let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                dir_path,
+                out_buf,
+                &[tmpfilename.as_bytes()],
+            );
             let len = result.len();
             file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
             return Some(len);
@@ -4591,8 +4590,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // Write to a scratch name then rename — atomic on POSIX and Windows
     // (MoveFileEx); concurrent racers' renames are semantic no-ops.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name =
-        Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
 
     let mut tmpfile = bun_sys::Tmpfile::create(dir_fd, scratch_name).ok()?;
     let tmpfile_fd = tmpfile.fd;
@@ -4691,10 +4689,11 @@ fn open_extract_dir(abs_buf: &mut [u8]) -> Option<ExtractDir<'_>> {
             }
             cursor.len
         };
-        let (fd, abs_z_len) = match try_open_extract_dir(abs_buf, tmpdir_path, &name_buf[..subdir_len], uid) {
-            Some(ok) => ok,
-            None => continue,
-        };
+        let (fd, abs_z_len) =
+            match try_open_extract_dir(abs_buf, tmpdir_path, &name_buf[..subdir_len], uid) {
+                Some(ok) => ok,
+                None => continue,
+            };
         // SAFETY: `abs_buf[..abs_z_len]` was written inside
         // `try_open_extract_dir`; re-borrow for the caller's lifetime.
         let path: &[u8] = &abs_buf[..abs_z_len];
@@ -4711,12 +4710,11 @@ fn try_open_extract_dir(
 ) -> Option<(bun_sys::Fd, usize)> {
     // Build `{tmpdir}/{subdir_name}\0` into abs_buf and hand out a ZStr.
     let abs_z_len = {
-        let joined =
-            bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-                tmpdir_path,
-                abs_buf,
-                &[subdir_name],
-            );
+        let joined = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+            tmpdir_path,
+            abs_buf,
+            &[subdir_name],
+        );
         joined.len()
     };
     // joined wrote NUL at abs_buf[abs_z_len]; build ZStr.
