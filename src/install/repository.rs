@@ -817,7 +817,10 @@ impl RepositoryExt for Repository {
         )
         .as_bytes();
 
-        let package_dir = match bun_sys::open_dir(bun_sys::Dir::borrow(&cache_dir), folder_name) {
+        let package_dir = match bun_sys::Dir::borrow(&cache_dir)
+            .open_at(folder_name)
+            .map_err(Error::from)
+        {
             Ok(d) => d,
             Err(not_found) => 'brk: {
                 if not_found != err!("ENOENT") {
@@ -873,7 +876,9 @@ impl RepositoryExt for Repository {
                     );
                     return Err(err);
                 }
-                let dir = bun_sys::open_dir(bun_sys::Dir::borrow(&cache_dir), folder_name)?;
+                let dir = bun_sys::Dir::borrow(&cache_dir)
+                    .open_at(folder_name)
+                    .map_err(Error::from)?;
                 let _ = dir.delete_tree(b".git");
 
                 if !resolved.is_empty() {
