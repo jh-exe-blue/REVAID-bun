@@ -4462,16 +4462,26 @@ unsafe fn transpile_virtual_module(
     }
 }
 
-/// Core of `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71):
-/// finds an embedded file in the standalone module graph, materializes it to
-/// a real on-disk temp file with `extname`, and writes the resulting absolute
-/// path into `out_buf`. Returns the number of bytes written.
+/// Serializes lazy init of `File.extracted_path` across Worker VMs.
+/// Extraction is rare and off the hot path, so one global lock is fine.
+static EXTRACTED_PATH_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
+/// Core of `ModuleLoader.resolveEmbeddedFile`: finds an embedded file in
+/// the standalone module graph, materialises it to a real on-disk temp file
+/// with `extname`, and writes the resulting absolute path into `out_buf`.
+/// Returns the number of bytes written.
 ///
 /// Called from two paths:
 ///   - `resolve_embedded_node_file_hook` (`process.dlopen()` on a compiled
 ///     executable; extname = `"node"`).
 ///   - `bun:ffi` `dlopen()` on an embedded `with { type: "file" }` shared
 ///     library (`ffi_body::FFI::open`; extname = `"so"` / `"dylib"` / `"dll"`).
+///
+/// Dedupes per-call extractions onto a single content-hashed tmpfile under
+/// a per-user `{tmpdir}/bun-{euid}/` subdir — see #29585. The extracted
+/// path is cached on `File.extracted_path` so repeated `dlopen()`s on the
+/// same embedded library (and across Worker VMs, which share the graph)
+/// share one on-disk copy.
 ///
 /// Returns `None` when the path is empty, not present in the graph, or any
 /// filesystem step fails.
@@ -4480,78 +4490,347 @@ pub(crate) fn resolve_embedded_file_to_buf(
     extname: &[u8],
     out_buf: &mut [u8],
 ) -> Option<usize> {
-    // Spec ModuleLoader.zig:34 — `if (input_path.len == 0) return null`.
     if input_path.is_empty() {
         return None;
     }
 
-    // Spec ModuleLoader.zig:35-36 — `vm.standalone_module_graph orelse return
-    // null` + `graph.find(input_path) orelse return null`.
-    //
-    // PORT NOTE: do NOT downcast the `&'static dyn StandaloneModuleGraph`
-    // stored on `vm` to `&mut Graph` — that shared-ref provenance is
-    // read-only (instant UB under Stacked Borrows). Reach the concrete graph
-    // via `Graph::get()` which hands out the `UnsafeCell` `*mut` (same path
-    // as `load_standalone_sourcemap` / `node_fs`).
+    // Reach the graph via the `UnsafeCell` `*mut` (not the `&'static dyn`
+    // on `vm`, which has read-only provenance → instant UB under Stacked
+    // Borrows if downcast to `&mut Graph`). This hook runs on the JS
+    // thread; `find` is read-only over the post-init `files` table.
     let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton; this hook runs on the JS thread and `find`
-    // is read-only over the post-init `files` table.
     let file = (unsafe { &mut *graph }).find(input_path)?;
-    let file_name: &[u8] = file.name;
     let file_contents: &[u8] = file.contents.as_bytes();
 
-    // Spec ModuleLoader.zig:43-45 — `tmpname(extname, buf, bun.hash(file.name))`.
-    let mut tmpname_buf = bun_paths::path_buffer_pool::get();
-    let tmpfilename =
-        Fs::FileSystem::tmpname(extname, &mut tmpname_buf[..], bun_wyhash::hash(file_name)).ok()?;
+    let _guard = EXTRACTED_PATH_LOCK.lock();
 
-    // Spec ModuleLoader.zig:47 — `bun.fs.FileSystem.instance.tmpdir()`.
-    // SAFETY: `FileSystem::instance()` returns the process-global singleton
-    // pointer (initialized at startup).
-    let tmpdir = (unsafe { &mut *Fs::FileSystem::instance() })
-        .tmpdir()
-        .ok()?;
-    let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
-
-    // Spec ModuleLoader.zig:50-51 — `bun.Tmpfile.create(tmpdir, tmpfilename)`.
-    let tmpfile = bun_sys::Tmpfile::create(tmpdir_fd, tmpfilename).ok()?;
-    let tmpfile_fd = tmpfile.fd;
-    scopeguard::defer! {
-        let _ = bun_sys::close(tmpfile_fd);
+    // Fast path: already extracted (possibly by a prior Worker). Validate
+    // the cached path still points at a file we own with the expected size.
+    // Plain stat-for-existence isn't enough: if systemd-tmpfiles sweeps
+    // both the extracted `.so` and the `bun-{uid}/` subdir, another user on
+    // a shared host can recreate the subdir (as themselves, 0755) and plant
+    // a malicious .so at the predictable name. Without the owner+size
+    // check below the fast path would hand that file to dlopen, sidestepping
+    // the per-user-subdir defence of the slow path.
+    //
+    // Using lstat rejects an attacker-planted symlink too. Size covers the
+    // file being replaced in place.
+    if let Some(cached) = file.extracted_path.as_ref() {
+        let cached_zstr = bun_core::ZStr::from_slice_with_nul(cached);
+        let ok = match bun_sys::lstat(cached_zstr).ok() {
+            Some(st) => {
+                #[cfg(windows)]
+                {
+                    let _ = &st;
+                    st.st_size as usize == file_contents.len()
+                }
+                #[cfg(unix)]
+                {
+                    let st_mode_u32 = st.st_mode as u32;
+                    let size_ok = st.st_size as usize == file_contents.len();
+                    let uid_ok = st.st_uid == extract_owner_uid();
+                    let is_reg = bun_sys::S::ISREG(st_mode_u32);
+                    size_ok && uid_ok && is_reg
+                }
+            }
+            None => false,
+        };
+        if ok {
+            let cached_bytes = &cached[..cached.len() - 1];
+            let len = cached_bytes.len();
+            out_buf[..len].copy_from_slice(cached_bytes);
+            return Some(len);
+        }
+        file.extracted_path = None;
     }
 
-    // Spec ModuleLoader.zig:53-67 — `NodeFS.writeFileWithPathBuffer(.{ .data
-    // = .encoded_slice(file.contents), .dirfd = tmpdir, .file = .{ .fd =
-    // tmpfile.fd }, .encoding = .buffer })`.
-    let mut scratch = bun_paths::path_buffer_pool::get();
-    if bun_sys::write_file_with_path_buffer(
-        &mut scratch,
+    // Per-user 0700 subdir defends CWE-377: without it, another user on a
+    // shared box could pre-create the deterministic tmpfile name and the
+    // size-only reuse check below would hand their library to dlopen.
+    let mut dir_abs_buf = bun_paths::path_buffer_pool::get();
+    let dir = open_extract_dir(&mut dir_abs_buf.0[..])?;
+    let dir_fd = dir.fd;
+    let dir_path = dir.path;
+    scopeguard::defer! {
+        let _ = bun_sys::close(dir_fd);
+    }
+
+    // Content-hashed filename so repeated dlopens and runs share one tmpfile
+    // instead of leaking per-call copies. See #29585.
+    let content_hash = bun_wyhash::hash(file_contents);
+    let mut name_buf = [0u8; 64];
+    let tmpfilename_len = {
+        use core::fmt::Write as _;
+        let mut cursor = NameBuf::new(&mut name_buf);
+        write!(&mut cursor, ".bun-{:x}.", content_hash).ok()?;
+        cursor.write_bytes(extname)?;
+        cursor.write_bytes(&[0u8])?;
+        cursor.len
+    };
+    // name_buf now contains ".bun-{hash}.{extname}\0" — tmpfilename_len
+    // includes the trailing NUL.
+    let tmpfilename = bun_core::ZStr::from_buf(&name_buf[..tmpfilename_len], tmpfilename_len - 1);
+
+    // Reuse any existing file with the expected size. Size + our-uid-only
+    // is enough to trust; concurrent racers converge here too.
+    if let Ok(st) = bun_sys::fstatat(dir_fd, tmpfilename) {
+        if st.st_size as usize == file_contents.len() {
+            let result =
+                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                    dir_path,
+                    out_buf,
+                    &[tmpfilename.as_bytes()],
+                );
+            let len = result.len();
+            file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
+            return Some(len);
+        }
+        // Wrong size — stale or corrupt. Fall through and replace via rename.
+    }
+
+    // Write to a scratch name then rename — atomic on POSIX and Windows
+    // (MoveFileEx); concurrent racers' renames are semantic no-ops.
+    let mut scratch_buf = bun_paths::path_buffer_pool::get();
+    let scratch_name =
+        Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+
+    let mut tmpfile = bun_sys::Tmpfile::create(dir_fd, scratch_name).ok()?;
+    let tmpfile_fd = tmpfile.fd;
+
+    let mut write_scratch = bun_paths::path_buffer_pool::get();
+    let write_ok = bun_sys::write_file_with_path_buffer(
+        &mut write_scratch,
         bun_sys::WriteFileArgs {
             data: bun_sys::WriteFileData::Buffer {
                 buffer: file_contents,
             },
             encoding: bun_sys::WriteFileEncoding::Buffer,
-            dirfd: tmpdir_fd,
+            dirfd: dir_fd,
             file: bun_sys::PathOrFileDescriptor::Fd(tmpfile_fd),
             ..Default::default()
         },
     )
-    .is_err()
-    {
+    .is_ok();
+
+    if !write_ok {
+        let _ = bun_sys::close(tmpfile_fd);
+        let _ = bun_sys::unlinkat(dir_fd, scratch_name);
         return None;
     }
 
-    // Spec ModuleLoader.zig:69 — `joinAbsStringBuf(RealFS.tmpdirPath(),
-    // path_buf, &.{tmpfilename}, .auto)`. `join_abs_string_buf` writes into
-    // `out_buf` and returns a slice pointing into it; capture the length so
-    // the caller knows how many bytes are live.
+    let finish_ok = tmpfile.finish(tmpfilename).is_ok();
+    let _ = bun_sys::close(tmpfile_fd);
+    if !finish_ok {
+        let _ = bun_sys::unlinkat(dir_fd, scratch_name);
+        return None;
+    }
+
     let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
-        Fs::RealFS::tmpdir_path(),
+        dir_path,
         out_buf,
         &[tmpfilename.as_bytes()],
     );
-    Some(result.len())
+    let len = result.len();
+    file.extracted_path = Some(path_to_nul_boxed(&out_buf[..len]));
+    Some(len)
+}
+
+/// Materialise a path slice into a NUL-terminated boxed buffer for caching
+/// on `File.extracted_path`.
+fn path_to_nul_boxed(path: &[u8]) -> Box<[u8]> {
+    let mut v: Vec<u8> = Vec::with_capacity(path.len() + 1);
+    v.extend_from_slice(path);
+    v.push(0);
+    v.into_boxed_slice()
+}
+
+/// `extractOwnerUid()`: `geteuid` (not `getuid`) on POSIX because `mkdir(2)`
+/// sets the dir owner to euid — a setuid-compiled binary where euid != ruid
+/// would otherwise create a dir whose owner != `getuid()` and fail the
+/// ownership check.
+#[cfg(unix)]
+fn extract_owner_uid() -> u32 {
+    bun_sys::c::geteuid() as u32
+}
+
+#[cfg(windows)]
+fn extract_owner_uid() -> u32 {
+    bun_sys::windows::user_unique_id()
+}
+
+struct ExtractDir<'a> {
+    fd: bun_sys::Fd,
+    /// Slice into the caller's `abs_buf`; valid for the duration of the
+    /// `open_extract_dir` call and the subsequent use in the caller.
+    path: &'a [u8],
+}
+
+/// Opens `{tmpdir}/bun-{uid}` (creating if needed, 0700 on POSIX) for
+/// cross-process dedup. If the canonical path is squatted (another uid
+/// owns it or it's mis-moded — DoS on shared hosts), falls back to an
+/// unpredictable `bun-{uid}-{rand}`. The absolute path is written into
+/// `abs_buf` and sliced into `.path`.
+fn open_extract_dir(abs_buf: &mut [u8]) -> Option<ExtractDir<'_>> {
+    let tmpdir_path = Fs::RealFS::tmpdir_path();
+    let uid = extract_owner_uid();
+
+    let mut name_buf = [0u8; 96];
+
+    // Try canonical + up to 8 random fallbacks. Each attempt overwrites
+    // `abs_buf`; on failure we just loop and try another name. Use a raw
+    // pointer dance so the borrow checker doesn't conflate the fresh
+    // borrow on each iteration with prior ones.
+    for attempt in 0..9 {
+        let subdir_len = {
+            use core::fmt::Write as _;
+            let mut cursor = NameBuf::new(&mut name_buf);
+            if attempt == 0 {
+                write!(&mut cursor, "bun-{}", uid).ok()?;
+            } else {
+                write!(&mut cursor, "bun-{}-{:x}", uid, bun_core::fast_random()).ok()?;
+            }
+            cursor.len
+        };
+        let (fd, abs_z_len) = match try_open_extract_dir(abs_buf, tmpdir_path, &name_buf[..subdir_len], uid) {
+            Some(ok) => ok,
+            None => continue,
+        };
+        // SAFETY: `abs_buf[..abs_z_len]` was written inside
+        // `try_open_extract_dir`; re-borrow for the caller's lifetime.
+        let path: &[u8] = &abs_buf[..abs_z_len];
+        return Some(ExtractDir { fd, path });
+    }
+    None
+}
+
+fn try_open_extract_dir(
+    abs_buf: &mut [u8],
+    tmpdir_path: &[u8],
+    subdir_name: &[u8],
+    uid: u32,
+) -> Option<(bun_sys::Fd, usize)> {
+    // Build `{tmpdir}/{subdir_name}\0` into abs_buf and hand out a ZStr.
+    let abs_z_len = {
+        let joined =
+            bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
+                tmpdir_path,
+                abs_buf,
+                &[subdir_name],
+            );
+        joined.len()
+    };
+    // joined wrote NUL at abs_buf[abs_z_len]; build ZStr.
+    let abs_z: &bun_core::ZStr = bun_core::ZStr::from_buf(abs_buf, abs_z_len);
+
+    let just_created = match bun_sys::mkdir(abs_z, 0o700) {
+        Ok(()) => true,
+        Err(e) => match e.get_errno() {
+            bun_sys::E::EEXIST => false,
+            _ => return None,
+        },
+    };
+
+    // `O_NOFOLLOW` prevents symlink-race redirection between mkdir and
+    // open. On Windows `bun_sys::open` strips `O_NOFOLLOW`/`O_DIRECTORY`
+    // via sys_uv, so call `open_dir_at_windows_a` directly (maps
+    // `no_follow` to `FILE_OPEN_REPARSE_POINT`).
+    #[cfg(windows)]
+    let fd = bun_sys::open_dir_at_windows_a(
+        bun_sys::Fd::cwd(),
+        abs_z.as_bytes(),
+        bun_sys::WindowsOpenDirOptions {
+            no_follow: true,
+            read_only: true,
+            ..Default::default()
+        },
+    )
+    .ok()?;
+
+    #[cfg(unix)]
+    let fd = bun_sys::open(
+        abs_z,
+        bun_sys::O::DIRECTORY | bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW,
+        0,
+    )
+    .ok()?;
+
+    // On POSIX verify the dir is ours and private. Windows relies on
+    // %TEMP%'s per-user ACL, which CreateDirectory inherits.
+    #[cfg(unix)]
+    {
+        // mkdir's mode arg is masked by the caller's umask, so a restrictive
+        // umask (e.g. 0o277) could leave the dir unwritable by us. Force
+        // 0o700; on a real POSIX FS this sets the exact mode (or fails
+        // with EPERM on a dir we don't own, which the uid check below
+        // catches). On a lax-mode mount (CIFS/SMB, vfat, WSL1 DrvFs,
+        // Docker bind-mounts from Windows/macOS) fchmod is silently
+        // no-op'd and the mount's static mode stays.
+        let _ = bun_sys::fchmod(fd, 0o700);
+
+        let st = match bun_sys::fstat(fd) {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = bun_sys::close(fd);
+                return None;
+            }
+        };
+        // Accept either strict (real POSIX FS, dir is 0o700 and ours) or
+        // lax (lax-mode mount where fchmod didn't take): require the dir
+        // is ours and the reported mode denies group/other write. This
+        // keeps cross-restart dedup working on CIFS/vfat/DrvFs without
+        // reopening CWE-377 on normal /tmp — an attacker-squatted dir
+        // fails `st.uid == uid`.
+        //
+        // `just_created` implies the dir is ours even on uid-pinned
+        // mounts (`uid=` mount-option) where st.uid is a fixed mount uid
+        // we may not match.
+        let st_mode_u32 = st.st_mode as u32;
+        let is_dir = bun_sys::S::ISDIR(st_mode_u32);
+        let dir_is_ours = just_created || st.st_uid == uid;
+        let mode_denies_shared_write = (st_mode_u32 & 0o022) == 0;
+        if !is_dir || !dir_is_ours || !mode_denies_shared_write {
+            let _ = bun_sys::close(fd);
+            // Clean up a dir we just mkdir'd but can't use — otherwise
+            // the 8-iteration random fallback leaks one empty dir per try
+            // on filesystems that report a group/other-writable mode.
+            if just_created {
+                let _ = bun_sys::rmdir(abs_z);
+            }
+            return None;
+        }
+    }
+
+    Some((fd, abs_z_len))
+}
+
+/// Cursor that formats into a stack `&mut [u8]` without allocating.
+/// Used to build `bun-{uid}` and content-hashed tmpfilenames.
+struct NameBuf<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+}
+
+impl<'a> NameBuf<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, len: 0 }
+    }
+    fn write_bytes(&mut self, bytes: &[u8]) -> Option<()> {
+        if self.len + bytes.len() > self.buf.len() {
+            return None;
+        }
+        self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
+        self.len += bytes.len();
+        Some(())
+    }
+    fn written(&self) -> &[u8] {
+        &self.buf[..self.len]
+    }
+}
+
+impl core::fmt::Write for NameBuf<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.write_bytes(s.as_bytes()).ok_or(core::fmt::Error)
+    }
 }
 
 /// `LoaderHooks::resolve_embedded_node_file` body — port of

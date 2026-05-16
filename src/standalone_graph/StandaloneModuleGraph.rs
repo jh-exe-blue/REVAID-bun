@@ -381,6 +381,11 @@ pub struct File {
     pub bytecode_origin_path: &'static [u8],
     pub module_format: ModuleFormat,
     pub side: FileSide,
+    /// Absolute on-disk path of the extracted tmpfile, once the embedded
+    /// shared library (`.so`/`.node`/`.dylib`/`.dll`) has been materialised
+    /// so libc `dlopen(2)` can open it. See
+    /// `jsc_hooks::resolve_embedded_file_to_buf`. NUL-terminated.
+    pub extracted_path: Option<Box<[u8]>>,
 }
 
 impl File {
@@ -623,6 +628,7 @@ impl StandaloneModuleGraph {
                     cached_blob: None,
                     encoding: Encoding::Binary,
                     wtf_string: BunString::empty(),
+                    extracted_path: None,
                 },
             );
         }
