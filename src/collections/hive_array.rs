@@ -515,6 +515,28 @@ impl<T> HiveOwned<T> {
         // same handle.
         unsafe { self.0.as_mut() }
     }
+
+    /// Re-seal a pool-slot pointer that round-tripped through an intrusive
+    /// queue (`bun_threading::UnboundedQueue`). The queue stores raw `*mut`
+    /// links inside the element, so the `HiveOwned` token cannot survive
+    /// transit; `push_owned` consumes it, and the drain side reconstructs it
+    /// here.
+    ///
+    /// `#[doc(hidden)]` — this is the queue's private back-door, not general
+    /// API. It must have exactly one caller per push/pop boundary; everything
+    /// else should hold a real `HiveOwned` from [`Fallback::get_owned`] /
+    /// [`HiveSlot::into_owned`].
+    ///
+    /// # Safety
+    /// `ptr` must be the unique owner of a claimed pool slot — i.e. it was
+    /// previously the inner pointer of a [`HiveOwned`] that was relinquished
+    /// to an intrusive queue (or otherwise not yet `put()` back), and no other
+    /// live `HiveOwned` references the same slot.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn from_raw_for_queue(ptr: *mut T) -> Self {
+        Self(NonNull::new(ptr).expect("queue node is non-null"))
+    }
 }
 
 // PORT NOTE: In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
