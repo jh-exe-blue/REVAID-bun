@@ -2,7 +2,6 @@
 //! Slow stuff is broken into tasks, each can run independently without locks
 
 use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
 
 use bun_ast::{Loc, Log};
 use bun_collections::HiveOwned;
