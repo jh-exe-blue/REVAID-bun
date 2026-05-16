@@ -1158,18 +1158,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 // `name_str` lifetime-detached above, `this`
                                 // is free to reborrow `&mut`.
                                 let network_task = this.get_network_task();
+                                let net_ptr = network_task.as_ptr();
                                 // SAFETY: `network_task` is the unique handle to a
                                 // freshly-vended pool slot. Zig's `network_task.* = .{ ... }`
                                 // resets every defaulted field; `write_init` mirrors that
                                 // (callback is `= undefined` and overwritten by `for_manifest`).
                                 unsafe {
-                                    NetworkTask::write_init(network_task, task_id, this_ptr, None);
+                                    NetworkTask::write_init(net_ptr, task_id, this_ptr, None);
                                 }
 
                                 let scope = this.scope_for_package_name(name_str);
-                                // SAFETY: network_task points to a valid initialized NetworkTask slot
+                                // SAFETY: `net_ptr` points to a valid initialized NetworkTask slot
                                 unsafe {
-                                    (*network_task).for_manifest(
+                                    (*net_ptr).for_manifest(
                                         name_str,
                                         scope,
                                         loaded_manifest.as_ref(),
@@ -1177,7 +1178,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         needs_extended_manifest,
                                     )?;
                                 }
-                                enqueue_network_task(this, network_task);
+                                enqueue_network_task(this, net_ptr);
                             }
                         } else {
                             this.peer_dependencies.write_item(id)?;

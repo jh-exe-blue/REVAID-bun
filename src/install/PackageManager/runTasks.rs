@@ -1702,19 +1702,17 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
     let _ = schedule_tasks(this);
 }
 
-// Vends an *uninitialized* slot; the callers placement-init it via
-// `NetworkTask::write_init(ptr, …)` (args differ per caller, so the init
-// cannot be hoisted here). This is the one remaining "uninit pointer across a
-// boundary" site — TODO(refactor): have callers go through a typed token /
-// index instead. Built from the safe `claim()` primitive: `forget` the
-// `HiveSlot` token so its `Drop` does not recycle the slot — it stays claimed
-// and is returned to the pool later via the existing `NetworkTask` `put` path,
-// exactly as before.
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
+// Vends an *uninitialized* pool slot as a sealed [`HiveOwned`] handle. Callers
+// placement-init it via `NetworkTask::write_init(handle.as_ptr(), …)` before
+// any deref (args differ per caller, so the init cannot be hoisted here).
+// `into_owned` consumes the `HiveSlot` token so its `Drop` does not recycle the
+// slot — it stays claimed and is returned to the pool later via the existing
+// `NetworkTask` `put` path, exactly as before.
+pub fn get_network_task(this: &mut PackageManager) -> bun_collections::HiveOwned<NetworkTask> {
     let slot = this.preallocated_network_tasks.claim();
-    let ptr = slot.addr().as_ptr();
-    core::mem::forget(slot);
-    ptr
+    // SAFETY: callers placement-init via `NetworkTask::write_init` before any
+    // call to `as_ref`/`as_mut` on the returned handle (see `into_owned` docs).
+    unsafe { slot.into_owned() }
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
@@ -1817,9 +1815,11 @@ pub fn generate_network_task_for_tarball<'a>(
     // back-pointer (TODO(port): lifetime — BACKREF).
     let this_backref: *mut PackageManager = this;
 
-    // Take the pool slot as a raw pointer so borrowck releases `this` for the
-    // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
+    // Take the pool slot as a sealed handle, then a raw pointer so borrowck
+    // releases `this` for the streaming-setup tail. Reborrowed `&mut`
+    // per-statement below.
+    let net_owned = get_network_task(this);
+    let net_ptr: *mut NetworkTask = net_owned.as_ptr();
     // Zig: `network_task.* = .{ .task_id, .callback = undefined, .allocator,
     // .package_manager, .apply_patch_task }` — full struct overwrite that resets
     // every other field (`retried`, `response`, `streaming_committed`,
@@ -1934,7 +1934,7 @@ impl PackageManager {
         is_network_task_required(self, task_id)
     }
     #[inline]
-    pub fn get_network_task(&mut self) -> *mut NetworkTask {
+    pub fn get_network_task(&mut self) -> bun_collections::HiveOwned<NetworkTask> {
         get_network_task(self)
     }
     #[inline]
