@@ -349,11 +349,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     let network_tasks_batch = manager.async_network_task_queue.pop_batch();
     let mut network_tasks_iter = network_tasks_batch.iterator();
     loop {
-        let task_ptr = network_tasks_iter.next();
-        if task_ptr.is_null() {
+        // SAFETY: the only producer for `async_network_task_queue` is
+        // `NetworkTask::notify` (HTTP-thread completion callback). Every node it
+        // pushes was vended from `manager.preallocated_network_tasks` at enqueue
+        // time and the `HiveOwned` token was relinquished at HTTP-schedule time;
+        // the slot stays claimed (not `put()`) until a later resolve-task pass.
+        // `next_owned()` re-seals exclusive ownership on the main thread.
+        let Some(task_owned) = (unsafe { network_tasks_iter.next_owned() }) else {
             break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
+        };
+        // Raw alias for ergonomic field access while `task_owned` carries the
+        // ownership token. `HiveOwned` does not deref by itself, so `task` and
+        // `task_owned` are not Rust-level aliases; `task_owned` is moved into
+        // `Task.network` (or dropped, no-op) before the slot is touched again.
+        let task_ptr = task_owned.as_ptr();
+        // SAFETY: `task_owned` is the sole live handle to this pool slot.
         let task = unsafe { &mut *task_ptr };
         if cfg!(debug_assertions) {
             debug_assert!(manager.pending_task_count() > 0);
@@ -624,15 +634,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .expect("unreachable");
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                // SAFETY: `task_ptr` was vended from
-                // `manager.preallocated_network_tasks` at enqueue time and not
-                // yet recycled; the FIFO carries exactly one owner per slot, so
-                // no other live `HiveOwned` exists.
-                let task_owned = unsafe {
-                    manager.preallocated_network_tasks.assume_owned(
-                        core::ptr::NonNull::new(task_ptr).expect("FIFO node is non-null"),
-                    )
-                };
+                // `task_owned` carries pool-slot ownership from the queue
+                // drain into `Task.network` — see `next_owned()` at loop top.
                 let queued = enqueue::enqueue_parse_npm_package(
                     manager,
                     task.task_id,
@@ -924,14 +927,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
-                // SAFETY: `task_ptr` was vended from
-                // `manager.preallocated_network_tasks` at enqueue time and not
-                // yet recycled; the FIFO carries exactly one owner per slot.
-                let task_owned = unsafe {
-                    manager.preallocated_network_tasks.assume_owned(
-                        core::ptr::NonNull::new(task_ptr).expect("FIFO node is non-null"),
-                    )
-                };
+                // `task_owned` carries pool-slot ownership from the queue
+                // drain into `Task.network` — see `next_owned()` at loop top.
                 let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_owned);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
