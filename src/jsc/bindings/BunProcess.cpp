@@ -381,9 +381,6 @@ static char* toFileURI(std::span<const char> span)
 
 extern "C" size_t Bun__process_dlopen_count;
 
-// "Fire and forget" wrapper around unlink for c usage that handles EINTR
-extern "C" void Bun__unlink(const char*, size_t);
-
 extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
