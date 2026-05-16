@@ -667,8 +667,9 @@ impl<'a> Lexer<'a> {
                                     }
                                     self.step();
                                     self.token = T::t_string_literal;
-                                    self.string_literal_slice =
-                                        &self.source.contents[start + 2..end];
+                                    self.string_literal_slice = &self.source.contents
+                                        [trim_multiline_start(&self.source.contents, start + 2)
+                                            ..end];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -758,13 +759,15 @@ impl<'a> Lexer<'a> {
                                     self.step();
 
                                     self.token = T::t_string_literal;
+                                    let content_start =
+                                        trim_multiline_start(&self.source.contents, start + 2);
                                     if needs_slow_pass {
-                                        slice_lo = start + 2;
+                                        slice_lo = content_start;
                                         slice_hi = end;
                                         break;
                                     }
                                     self.string_literal_slice =
-                                        &self.source.contents[start + 2..end];
+                                        &self.source.contents[content_start..end];
                                     return Ok(());
                                 }
                                 _ => {}
@@ -888,8 +891,9 @@ impl<'a> Lexer<'a> {
             match iter.c {
                 c if c == '\r' as CodePoint => {
                     // Convert '\r\n' into '\n'
-                    if (iter.i as usize) < text.len() && text[iter.i as usize] == b'\n' {
-                        iter.i += 1;
+                    let cr_next = iter.i as usize + iter.width as usize;
+                    if cr_next < text.len() && text[cr_next] == b'\n' {
+                        iter.i = cr_next as u32;
                     }
 
                     // Convert '\r' into '\n'
@@ -908,33 +912,27 @@ impl<'a> Lexer<'a> {
                     match c2 {
                         // https://mathiasbynens.be/notes/javascript-escapes#single
                         c if c == 'b' as CodePoint => {
-                            buf.push(8);
+                            buf.push(0x08);
                             continue;
                         }
                         c if c == 'f' as CodePoint => {
-                            buf.push(9);
+                            buf.push(0x0C);
                             continue;
                         }
                         c if c == 'n' as CodePoint => {
-                            buf.push(10);
+                            buf.push(0x0A);
                             continue;
                         }
                         c if c == 'v' as CodePoint => {
-                            // Vertical tab is invalid JSON
-                            // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
-                            buf.push(11);
+                            buf.push(0x0B);
                             continue;
                         }
                         c if c == 't' as CodePoint => {
-                            buf.push(12);
+                            buf.push(0x09);
                             continue;
                         }
                         c if c == 'r' as CodePoint => {
-                            buf.push(13);
+                            buf.push(0x0D);
                             continue;
                         }
 
@@ -1147,20 +1145,40 @@ impl<'a> Lexer<'a> {
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
 
-                            // Ignore line continuations. A line continuation is not an escaped newline.
-                            if (iter.i as usize) < text.len() && text[iter.i as usize + 1] == b'\n'
-                            {
-                                // Make sure Windows CRLF counts as a single newline
-                                iter.i += 1;
+                            // Line ending backslash: skip \r\n pair and all subsequent whitespace
+                            let next_pos = iter.i as usize + iter.width as usize;
+                            if next_pos < text.len() && text[next_pos] == b'\n' {
+                                iter.i = (next_pos + 1) as u32;
+                            } else {
+                                iter.i = next_pos as u32;
                             }
+                            // Consume all subsequent whitespace (spaces, tabs, newlines)
+                            while (iter.i as usize) < text.len() {
+                                match text[iter.i as usize] {
+                                    b' ' | b'\t' | b'\n' | b'\r' => iter.i += 1,
+                                    _ => break,
+                                }
+                            }
+                            // Reset width so the next iterator.next() starts at iter.i
+                            iter.width = 0;
                             continue;
                         }
                         c if c == '\n' as CodePoint || c == 0x2028 || c == 0x2029 => {
-                            // Ignore line continuations. A line continuation is not an escaped newline.
+                            // Line ending backslash: skip newline and all subsequent whitespace
                             if !ALLOW_MULTILINE {
                                 self.end = start + iter.i as usize - width2 as usize;
                                 self.add_default_error(b"Unexpected end of line")?;
                             }
+                            iter.i += iter.width as u32;
+                            // Consume all subsequent whitespace (spaces, tabs, newlines)
+                            while (iter.i as usize) < text.len() {
+                                match text[iter.i as usize] {
+                                    b' ' | b'\t' | b'\n' | b'\r' => iter.i += 1,
+                                    _ => break,
+                                }
+                            }
+                            // Reset width so the next iterator.next() starts at iter.i
+                            iter.width = 0;
                             continue;
                         }
                         _ => {
@@ -1314,6 +1332,23 @@ pub fn is_latin1_identifier<B: Copy + Into<u32>>(name: &[B]) -> bool {
     }
 
     true
+}
+
+/// Per TOML spec: "A newline immediately following the opening delimiter will be trimmed."
+/// Applies to both multi-line basic strings (""") and multi-line literal strings (''').
+#[inline]
+fn trim_multiline_start(contents: &[u8], content_start: usize) -> usize {
+    if content_start < contents.len() && contents[content_start] == b'\n' {
+        return content_start + 1;
+    }
+    if content_start < contents.len()
+        && contents[content_start] == b'\r'
+        && content_start + 1 < contents.len()
+        && contents[content_start + 1] == b'\n'
+    {
+        return content_start + 2;
+    }
+    content_start
 }
 
 #[inline]
