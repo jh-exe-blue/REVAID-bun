@@ -1095,7 +1095,7 @@ pub mod fs {
         ) -> core::result::Result<DirEntry, bun_core::Error> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
-            // errdefer dir.deinit() — DirEntry: Drop frees `data` on `?`.
+            // errdefer dir.deinit()
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1192,7 +1192,7 @@ pub mod fs {
 
             crate::Resolver::assert_valid_cache_key(dir);
             let mut cache_result: Option<bun_alloc::Result> = None;
-            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();` — RAII guard.
+            // Zig: `entries_mutex.lock(); defer entries_mutex.unlock();`
             // `MutexGuard` stores a raw `*const Mutex` so it does not keep `&self`
             // borrowed across the body below.
             let _unlock_guard = if bun_core::FeatureFlags::ENABLE_ENTRY_CACHE {
@@ -1467,8 +1467,6 @@ pub mod fs {
                     let file: Fd = if let Some(valid) = existing_fd.unwrap_valid() {
                         valid
                     } else if store_fd {
-                        // `into_raw()` (not `handle()`): `File` is now owning — peeking
-                        // `handle()` from a temporary would close the fd on drop.
                         bun_sys::open_file_absolute_z(
                             absolute_path_c,
                             bun_sys::OpenFlags::READ_ONLY,
@@ -2307,11 +2305,6 @@ pub mod cache {
                 // SAFETY: ctx/function pair was supplied together by the native plugin.
                 unsafe { func(self.external_free_function.ctx) };
             }
-            // Replacing the variant drops `Owned(Vec<u8>)` (matches Zig's
-            // `allocator.free(entry.contents)`); `Arena`/`SharedBuffer`/
-            // `External`/`Empty` have trivial drops, so the shared-buffer and
-            // arena paths are correct no-ops instead of the UB `heap::take`
-            // they used to be.
             self.contents = Contents::Empty;
         }
 
@@ -2384,11 +2377,6 @@ pub mod cache {
                 bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
                     .map_err(bun_core::Error::from)?
             };
-            // `File` is now owning — its `Drop` closes unconditionally. Install the
-            // disarm guard immediately so an unwind between construction and use
-            // can't close a borrowed fd: when we should *not* close (cached fd
-            // belongs to the caller, or STORE_FILE_DESCRIPTORS keeps it alive),
-            // `into_raw()` disarms; otherwise let `Drop` close.
             let file_handle = scopeguard::guard(file_handle, move |fh| {
                 if !will_close {
                     let _ = fh.into_raw();
@@ -2509,12 +2497,6 @@ pub mod cache {
                     .map_err(bun_core::Error::from)?
             };
 
-            // `File` is now owning — its `Drop` closes unconditionally. Install the
-            // disarm guard immediately so an unwind between construction and use
-            // (e.g. in the `scoped_log!` formatting below) can't close a borrowed
-            // fd: when we should *not* close (caller-supplied fd, or
-            // STORE_FILE_DESCRIPTORS keeps it alive), `into_raw()` disarms;
-            // otherwise let `Drop` close.
             let file_handle = scopeguard::guard(file_handle, move |fh| {
                 if will_close {
                     bun_core::scoped_log!(CacheFs, "readFileWithAllocator close({})", fh.handle());
@@ -3890,8 +3872,6 @@ pub mod __phase_a_body {
             })
         }
 
-        // deinit → Drop (only frees `notes`; `indent` deinit was commented out in Zig)
-
         #[cold]
         pub fn increase_indent(&mut self) {
             self.indent.append(b" ").expect("unreachable");
@@ -3910,7 +3890,6 @@ pub mod __phase_a_body {
                 let mut __text = Vec::with_capacity(text.len() + len);
                 __text.extend_from_slice(self.indent.list.as_slice());
                 __text.extend_from_slice(&text);
-                // d.notes.allocator.free(_text) — drop(text) is implicit
                 __text
             } else {
                 text
@@ -3990,11 +3969,6 @@ pub mod __phase_a_body {
     pub type PendingResolutionList = MultiArrayList<PendingResolution>;
 
     impl PendingResolution {
-        // PORT NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
-        // (Zig body only freed `dependency` + `string_buf` per item; both are owned fields with Drop.)
-
-        // deinit → Drop (frees dependency + string_buf; both have Drop)
-
         pub fn init(
             esm: crate::package_json::Package<'_>,
             dependency: Dependency::Version,
@@ -4768,7 +4742,6 @@ pub mod __phase_a_body {
 
             if self.log_ref().level == bun_ast::Level::Verbose {
                 if self.debug_logs.is_some() {
-                    // deinit → drop
                     self.debug_logs = None;
                 }
                 self.debug_logs = Some(DebugLogs::init().expect("unreachable"));
@@ -10006,7 +9979,6 @@ pub mod __phase_a_body {
                                 // deeper config doesn't leak. Each value is a []string slice
                                 // that was separately heap-allocated in TSConfigJSON.parse()
                                 // (tsconfig_json.zig), so free those before the map itself.
-                                // (In Rust, dropping the map frees values automatically.)
                                 mc.paths = core::mem::take(&mut parent_config.paths);
                                 mc.base_url_for_paths =
                                     core::mem::take(&mut parent_config.base_url_for_paths);
@@ -10015,7 +9987,6 @@ pub mod __phase_a_body {
                                 // by parent_config. base_url_for_paths.len == 0 implies the map
                                 // is empty (it's only set when the `paths` key is present in the
                                 // JSON), so this is a no-op but documents the ownership.
-                                // (Drop handles parent_config.paths.)
                             }
                             // Every scalar/reference we need has been copied into merged_config
                             // (strings live in dirname_store or default_allocator and outlive the

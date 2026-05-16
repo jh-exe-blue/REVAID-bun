@@ -257,8 +257,6 @@ pub mod lib {
             let mut target_offset: i64 = 0; // Updated by archive.next() — where this block should be written
             let mut actual_offset: i64 = 0; // Where we've actually written to (for write() path)
             let mut final_offset: i64 = 0; // Furthest point the file must extend to
-            // `fd` belongs to the caller — borrow rather than wrap in an owning
-            // `File`, which would close it on Drop.
             let file = bun_sys::File::borrow(&fd);
 
             while let Some(block) = self.next(&mut target_offset) {
@@ -1617,7 +1615,6 @@ impl Archiver {
         let mut ctx = ctx;
 
         let mut symlink_join_buf: Option<bun_paths::path_buffer_pool::Guard> = None;
-        // (guard Drop puts the buffer back to the pool)
 
         let mut normalized_buf = OSPathBuffer::uninit();
         let mut use_pwrite = cfg!(unix);
