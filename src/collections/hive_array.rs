@@ -412,6 +412,25 @@ impl<'h, T, const CAPACITY: usize> HiveSlot<'h, T, CAPACITY> {
         let this = ManuallyDrop::new(self);
         this.slot.cast::<T>()
     }
+
+    /// Consume the token into an owned, lifetime-erased [`HiveOwned`] handle.
+    /// The slot stays claimed (the token's `Drop` does not run); recycle later
+    /// via [`Fallback::put`] / [`Fallback::put_raw`].
+    ///
+    /// `HiveOwned` does not deref by itself, so this does not require the slot
+    /// to already be initialized — that obligation moves to the first
+    /// [`HiveOwned::as_ref`] / [`HiveOwned::as_mut`].
+    ///
+    /// # Safety
+    /// The slot must be fully initialized before any call to
+    /// [`HiveOwned::as_ref`] / [`HiveOwned::as_mut`] on the returned handle.
+    /// Use after [`write`](Self::write) or after placement-init through
+    /// [`addr`](Self::addr) / [`as_uninit`](Self::as_uninit).
+    #[inline]
+    pub unsafe fn into_owned(self) -> HiveOwned<T> {
+        let this = ManuallyDrop::new(self);
+        HiveOwned(this.slot.cast::<T>())
+    }
 }
 
 impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
@@ -440,6 +459,61 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
             // in `Fallback::claim` and has not been freed.
             drop(unsafe { Box::from_raw(self.slot.as_ptr()) });
         }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// HiveOwned
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Owned, lifetime-erased handle to a fully-initialized pool slot.
+///
+/// Constructible only from a real pool claim (no public `new`), so safe code
+/// cannot manufacture one from a dangling pointer. Move-only — there is exactly
+/// one per claimed slot, so aliasing two of them is a compile error.
+///
+/// Unlike [`HiveSlot`], this does not borrow the pool; it can be stored in
+/// long-lived structs (e.g. a `Task` that outlives the claiming scope). The
+/// trade-off: it does not track recycling. Dereferencing after the slot has
+/// been [`Fallback::put`] is UB — that contract lives on
+/// [`as_ref`](Self::as_ref) / [`as_mut`](Self::as_mut).
+///
+/// There is no `Drop`: dropping a `HiveOwned` is a no-op (the slot stays
+/// claimed). Recycling is the explicit [`Fallback::put`] step, matching the
+/// existing pool protocol.
+pub struct HiveOwned<T>(NonNull<T>);
+
+impl<T> HiveOwned<T> {
+    /// Stable address of the slot. Safe — returning a raw pointer is safe;
+    /// dereferencing it isn't.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+
+    /// Borrow the slot's contents for the lifetime of `&self`.
+    ///
+    /// # Safety
+    /// The slot must be fully initialized and must not have been returned to
+    /// the pool via [`Fallback::put`] / [`Fallback::put_raw`].
+    #[inline]
+    pub unsafe fn as_ref(&self) -> &T {
+        // SAFETY: caller contract — slot is initialized and not recycled.
+        unsafe { self.0.as_ref() }
+    }
+
+    /// Mutably borrow the slot's contents for the lifetime of `&mut self`.
+    ///
+    /// # Safety
+    /// The slot must be fully initialized and must not have been returned to
+    /// the pool via [`Fallback::put`] / [`Fallback::put_raw`]. No other
+    /// reference into the slot may be live for the duration of the borrow.
+    #[inline]
+    pub unsafe fn as_mut(&mut self) -> &mut T {
+        // SAFETY: caller contract — slot is initialized, not recycled, and
+        // not aliased. `&mut self` prevents forming two `&mut T` from the
+        // same handle.
+        unsafe { self.0.as_mut() }
     }
 }
 
@@ -507,6 +581,13 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     #[inline]
     pub fn get_init(&mut self, value: T) -> NonNull<T> {
         self.claim().write(value)
+    }
+
+    /// Claim, write, and return a lifetime-erased owned handle. The slot stays
+    /// claimed; recycle later via [`put`](Self::put). See [`HiveOwned`].
+    #[inline]
+    pub fn get_owned(&mut self, value: T) -> HiveOwned<T> {
+        HiveOwned(self.get_init(value))
     }
 
     /// See [`HiveArray::emplace`]. Infallible (heap fallback).
@@ -747,6 +828,42 @@ mod tests {
         // SAFETY: heap slot from this Fallback.
         unsafe { f.put(p.as_ptr()) };
         assert_eq!(DROPS.load(Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn hive_owned_lifecycle() {
+        let mut f = Fallback::<u64, 4>::init();
+
+        // get_owned: claim + write + lifetime-erase in one shot.
+        let mut owned = f.get_owned(7u64);
+        assert!(f.hive.used.is_set(0));
+        // SAFETY: `get_owned` initialized the slot; not yet recycled.
+        assert_eq!(unsafe { *owned.as_ref() }, 7);
+        // SAFETY: same slot, sole `HiveOwned`, not recycled.
+        unsafe { *owned.as_mut() = 9 };
+
+        // Move it (compile-time check that it's not implicitly `Copy`).
+        let moved = owned;
+        // SAFETY: still initialized, slot still claimed.
+        assert_eq!(unsafe { *moved.as_ref() }, 9);
+
+        // No `Drop` on `HiveOwned` — recycle through the explicit put().
+        // SAFETY: slot is fully initialized; `as_ptr()` is the pool address.
+        unsafe { f.put(moved.as_ptr()) };
+        assert!(!f.hive.used.is_set(0));
+
+        // claim → into_owned → placement-init → as_ref: the deferred-init path.
+        let slot = f.claim();
+        // SAFETY: slot will be initialized through `as_ptr()` before any deref.
+        let owned = unsafe { slot.into_owned() };
+        assert!(f.hive.used.is_set(0));
+        // SAFETY: `owned` points at a freshly claimed inline slot.
+        unsafe { owned.as_ptr().write(42) };
+        // SAFETY: just initialized, slot still claimed.
+        assert_eq!(unsafe { *owned.as_ref() }, 42);
+        // SAFETY: slot is fully initialized.
+        unsafe { f.put(owned.as_ptr()) };
+        assert!(!f.hive.used.is_set(0));
     }
 }
 
