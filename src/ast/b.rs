@@ -10,19 +10,23 @@ pub use crate::ArrayBinding;
 /// declarations (s_local), which is how destructuring assignments
 /// are represented in memory. Consider a basic example.
 ///
-///     let hello = world;
-///         ^       ^
-///         |       E.Identifier
-///         B.Identifier
+/// ```text
+/// let hello = world;
+///     ^       ^
+///     |       E.Identifier
+///     B.Identifier
+/// ```
 ///
 /// Bindings can be nested
 ///
-///                B.Array
-///                | B.Identifier
-///                | |
-///     let { foo: [ bar ] } = ...
-///         ----------------
-///         B.Object
+/// ```text
+///            B.Array
+///            | B.Identifier
+///            | |
+/// let { foo: [ bar ] } = ...
+///     ----------------
+///     B.Object
+/// ```
 // Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
 // PORT NOTE: arena ptrs are raw `*mut` in Phase A (LIFETIMES.tsv: ARENA → raw);
 // 'bump threaded crate-wide (`&'bump mut T`).
