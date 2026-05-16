@@ -624,8 +624,21 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 .expect("unreachable");
                 // PORT NOTE: reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                let queued =
-                    enqueue::enqueue_parse_npm_package(manager, task.task_id, name_tiny, task_ptr);
+                // SAFETY: `task_ptr` was vended from
+                // `manager.preallocated_network_tasks` at enqueue time and not
+                // yet recycled; the FIFO carries exactly one owner per slot, so
+                // no other live `HiveOwned` exists.
+                let task_owned = unsafe {
+                    manager.preallocated_network_tasks.assume_owned(
+                        core::ptr::NonNull::new(task_ptr).expect("FIFO node is non-null"),
+                    )
+                };
+                let queued = enqueue::enqueue_parse_npm_package(
+                    manager,
+                    task.task_id,
+                    name_tiny,
+                    task_owned,
+                );
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
@@ -911,7 +924,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
 
                 // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
-                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
+                // SAFETY: `task_ptr` was vended from
+                // `manager.preallocated_network_tasks` at enqueue time and not
+                // yet recycled; the FIFO carries exactly one owner per slot.
+                let task_owned = unsafe {
+                    manager.preallocated_network_tasks.assume_owned(
+                        core::ptr::NonNull::new(task_ptr).expect("FIFO node is non-null"),
+                    )
+                };
+                let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_owned);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             _ => unreachable!(),
@@ -1884,7 +1905,12 @@ pub fn generate_network_task_for_tarball<'a>(
             };
             t
         };
-        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
+        // `create_extract_task_for_streaming` consumes the `HiveOwned` (it is
+        // moved into `Task.network`); the streaming-state writes below go
+        // through the `net_ptr` raw alias, which stays valid (the slot is not
+        // recycled here). This is the documented "secondary use through
+        // `as_ptr()`" pattern — exactly one `HiveOwned` exists.
+        let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_owned);
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(bun_core::heap::take(TarballStream::init(

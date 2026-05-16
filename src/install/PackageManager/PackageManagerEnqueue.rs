@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
+use bun_collections::HiveOwned;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{StringOrTinyString, strings};
 use bun_paths::{self as Path, PathBuffer};
@@ -354,7 +355,7 @@ pub fn enqueue_parse_npm_package(
     this: &mut PackageManager,
     task_id: Task::Id,
     name: StringOrTinyString,
-    network_task: *mut NetworkTask,
+    network_task: HiveOwned<NetworkTask>,
 ) -> *mut ThreadPool::Task {
     // Build the `Task` value first (uses `this` freely), then claim+init the
     // pool slot. `value` owns no borrow of `this` — the back-pointer is a raw
@@ -367,7 +368,7 @@ pub fn enqueue_parse_npm_package(
         request: crate::package_manager_task::Request {
             package_manifest: ManuallyDrop::new(
                 crate::package_manager_task::PackageManifestRequest {
-                    network: NonNull::new(network_task).expect("freshly-vended pool slot"),
+                    network: network_task,
                     name,
                 },
             ),
@@ -1654,9 +1655,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 fn init_extract_task(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
-    network_task: *mut NetworkTask,
+    network: HiveOwned<NetworkTask>,
 ) -> *mut Task::Task {
-    let network = NonNull::new(network_task).expect("freshly-vended pool slot");
     // SAFETY: `network` is a freshly-vended `preallocated_network_tasks` pool
     // slot; the slot is fully initialized and outlives this `Task`.
     let task_id = unsafe { network.as_ref() }.task_id;
@@ -1689,7 +1689,7 @@ fn init_extract_task(
 pub fn enqueue_extract_npm_package(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
-    network_task: *mut NetworkTask,
+    network_task: HiveOwned<NetworkTask>,
 ) -> *mut ThreadPool::Task {
     // SAFETY: init_extract_task returns a valid *mut Task
     unsafe { &raw mut (*init_extract_task(this, tarball, network_task)).threadpool_task }
@@ -1703,7 +1703,7 @@ pub fn enqueue_extract_npm_package(
 pub fn create_extract_task_for_streaming(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
-    network_task: *mut NetworkTask,
+    network_task: HiveOwned<NetworkTask>,
 ) -> *mut Task::Task {
     init_extract_task(this, tarball, network_task)
 }
@@ -2962,7 +2962,7 @@ impl PackageManager {
         &mut self,
         task_id: Task::Id,
         name: StringOrTinyString,
-        network_task: *mut NetworkTask,
+        network_task: HiveOwned<NetworkTask>,
     ) -> *mut ThreadPool::Task {
         enqueue_parse_npm_package(self, task_id, name, network_task)
     }
@@ -2971,7 +2971,7 @@ impl PackageManager {
     pub fn enqueue_extract_npm_package(
         &mut self,
         tarball: &ExtractTarball,
-        network_task: *mut NetworkTask,
+        network_task: HiveOwned<NetworkTask>,
     ) -> *mut ThreadPool::Task {
         enqueue_extract_npm_package(self, tarball, network_task)
     }
@@ -2980,7 +2980,7 @@ impl PackageManager {
     pub fn create_extract_task_for_streaming(
         &mut self,
         tarball: &ExtractTarball,
-        network_task: *mut NetworkTask,
+        network_task: HiveOwned<NetworkTask>,
     ) -> *mut Task::Task {
         create_extract_task_for_streaming(self, tarball, network_task)
     }

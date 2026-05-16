@@ -5,6 +5,7 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_ast::{Loc, Log};
+use bun_collections::HiveOwned;
 use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_semver as semver;
@@ -642,15 +643,18 @@ pub union Request {
 
 pub struct PackageManifestRequest {
     pub name: StringOrTinyString,
-    /// Points into `PackageManager.preallocated_network_tasks` (a pool slot
-    /// vended at enqueue time and returned to the pool after this task is
-    /// processed). Outlives the `Task` by pool contract — Zig: `*NetworkTask`.
-    pub network: NonNull<NetworkTask>,
+    /// `PackageManager.preallocated_network_tasks` pool slot vended at enqueue
+    /// time and returned to the pool after this task is processed. Outlives the
+    /// `Task` by pool contract — Zig: `*NetworkTask`. `HiveOwned` is sealed and
+    /// move-only, so safe code cannot construct this from a dangling pointer or
+    /// alias it across two `Task`s; use-after-`put` remains an `unsafe`
+    /// contract on the deref methods.
+    pub network: HiveOwned<NetworkTask>,
 }
 
 pub struct ExtractRequest {
     /// See `PackageManifestRequest::network` — same pool-slot contract.
-    pub network: NonNull<NetworkTask>,
+    pub network: HiveOwned<NetworkTask>,
     pub tarball: ExtractTarball,
 }
 
