@@ -123,8 +123,8 @@ pub type RequestContextStackAllocator<
 > = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
 
 thread_local! {
-    // TODO(port): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
-    // per-monomorphization. Rust thread_local! cannot be generic; Phase B: move into ThisServer
+    // TODO(refactor): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
+    // per-monomorphization. Rust thread_local! cannot be generic; move into ThisServer
     // or use a per-instantiation static via macro.
     static POOL: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
 }
@@ -164,7 +164,7 @@ pub struct RequestContext<
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
     // TODO(port): bare JSValue heap field — kept alive via manual protect()/unprotect()
-    // (response_protected flag); revisit bun_jsc::Strong in Phase B.
+    // (response_protected flag); revisit whether bun_jsc::Strong fits here.
     pub response_jsvalue: JSValue,
     pub ref_count: u8,
 
@@ -325,7 +325,7 @@ unsafe fn as_response(value: JSValue) -> Option<&'static mut Response> {
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
 // impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal,
-// duplicate InternalJSEventCallback). Adapt on this side per phase-d rules.
+// duplicate InternalJSEventCallback). Adapt on this side.
 mod shim {
     use super::*;
 
@@ -1034,7 +1034,7 @@ where
     pub fn render_default_error(
         &mut self,
         // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
-        // PERF(port): was arena bulk-free — profile in Phase B
+        // PERF(port): was arena bulk-free — profile if hot.
         log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
@@ -1293,51 +1293,47 @@ where
         }
     }
 
-    // TODO(port): in-place init — `this` is a pre-allocated slot in a HiveArray pool.
-    pub fn create(
-        this: &mut core::mem::MaybeUninit<Self>,
+    /// Build a fully-initialized `RequestContext` by value. The pool slot is
+    /// claimed and written via the safe `Fallback::get_init`; no caller forms
+    /// `&mut`/`*mut` over uninitialized storage.
+    pub fn new(
         server: *const ThisServer,
         req: *mut Req<SSL_ENABLED, HTTP3>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<Method>,
-    ) {
+    ) -> Self {
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
-        // SAFETY: writing to MaybeUninit slot
-        unsafe {
-            this.as_mut_ptr().write(Self {
-                resp: Some(resp),
-                req: Some(req),
-                method: resolved_method,
-                server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
-                defer_deinit_until_callback_completes: should_deinit_context,
-                range: RangeRequest::raw_from_request(&Self::any_request(req)),
-                request_weakref: request::WeakRef::EMPTY,
-                signal: None,
-                cookies: None,
-                flags: Flags::<DEBUG_MODE>::default(),
-                upgrade_context: None,
-                response_jsvalue: JSValue::ZERO,
-                ref_count: 1,
-                response_weakref: response::WeakRef::EMPTY,
-                blob: AnyBlob::Blob(Blob::default()),
-                sendfile: SendfileContext::default(),
-                request_body_readable_stream_ref: readable_stream::Strong::default(),
-                request_body: None,
-                request_body_buf: Vec::new(),
-                request_body_content_len: 0,
-                sink: None,
-                byte_stream: None,
-                response_body_readable_stream_ref: readable_stream::Strong::default(),
-                pathname: BunString::empty(),
-                response_buf_owned: Vec::new(),
-                additional_on_abort: None,
-            });
+        Self {
+            resp: Some(resp),
+            req: Some(req),
+            method: resolved_method,
+            server: NonNull::new(server.cast_mut()).map(bun_ptr::BackRef::from),
+            defer_deinit_until_callback_completes: should_deinit_context,
+            range: RangeRequest::raw_from_request(&Self::any_request(req)),
+            request_weakref: request::WeakRef::EMPTY,
+            signal: None,
+            cookies: None,
+            flags: Flags::<DEBUG_MODE>::default(),
+            upgrade_context: None,
+            response_jsvalue: JSValue::ZERO,
+            ref_count: 1,
+            response_weakref: response::WeakRef::EMPTY,
+            blob: AnyBlob::Blob(Blob::default()),
+            sendfile: SendfileContext::default(),
+            request_body_readable_stream_ref: readable_stream::Strong::default(),
+            request_body: None,
+            request_body_buf: Vec::new(),
+            request_body_content_len: 0,
+            sink: None,
+            byte_stream: None,
+            response_body_readable_stream_ref: readable_stream::Strong::default(),
+            pathname: BunString::empty(),
+            response_buf_owned: Vec::new(),
+            additional_on_abort: None,
         }
-
-        ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
     pub fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
@@ -3191,7 +3187,7 @@ where
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
         if DEBUG_MODE {
-            // PERF(port): was arena bulk-free — profile in Phase B
+            // PERF(port): was arena bulk-free — profile if hot.
             let mut exception_list_upstream: jsc::ExceptionList = Vec::new();
             let prev_exception_list = vm.on_unhandled_rejection_exception_list;
             vm.on_unhandled_rejection_exception_list =

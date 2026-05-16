@@ -202,26 +202,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         // `buffer: [MaybeUninit<T>; CAPACITY]` intentionally untouched.
     }
 
-    /// Claim a slot and return a raw pointer to its **uninitialized** storage.
-    ///
-    /// Prefer [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
-    /// [`claim`](Self::claim), which encode the "a `used` slot is always
-    /// fully initialized" invariant in the type system. This entry point
-    /// hands out `*mut T` to garbage; forming `&mut T` over it is instant UB
-    /// when `T` has niche-bearing fields, and an early return between `get()`
-    /// and the caller's `ptr::write` leaves the slot claimed-but-uninit so a
-    /// later [`put`](Self::put) drops garbage.
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get(&mut self) -> Option<*mut T> {
-        let Some(index) = self.used.find_first_unset() else {
-            return None;
-        };
-        self.used.set(index);
-        let ret = self.buffer[index].as_mut_ptr();
-        asan::unpoison(ret.cast(), size_of::<T>());
-        Some(ret)
-    }
-
     /// One-shot claim + write. Preferred entry point — no uninit window.
     ///
     /// Returns `None` (and does **not** consume `value`'s slot) if the hive
@@ -466,7 +446,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 // module scope with the same parameters. The Zig field
 // `hive: if (capacity > 0) Self else void` is always materialized here; the
 // `CAPACITY > 0` checks below preserve the original gating.
-// PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
+// PERF(port): zero-capacity case carried a zero-size hive in Zig.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
     // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
@@ -518,33 +498,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         // is `[MaybeUninit<T>; CAPACITY]`, for which uninitialized bytes are a
         // valid representation. Every field of `Self` is therefore valid.
         NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
-    }
-
-    /// See [`HiveArray::get`] — same UB hazards, plus the heap path leaks a
-    /// `Box<MaybeUninit<T>>` if the caller early-returns before `ptr::write`.
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get(&mut self) -> *mut T {
-        // Forget the token so its `Drop` does not release the slot — legacy
-        // callers expect the slot to remain claimed until their later `put()`.
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get_and_see_if_new(&mut self, new: &mut bool) -> *mut T {
-        if CAPACITY > 0 {
-            #[allow(deprecated)]
-            if let Some(value) = self.hive.get() {
-                *new = false;
-                return value;
-            }
-        }
-
-        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn try_get(&mut self) -> *mut T {
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
     }
 
     /// One-shot claim + write. Preferred entry point — no uninit window.
@@ -617,9 +570,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must point to a fully-initialized `T` previously obtained from
-    /// [`get`](Self::get) / [`get_and_see_if_new`](Self::get_and_see_if_new) /
-    /// [`try_get`](Self::try_get) on this `Fallback` and subsequently written
-    /// by the caller.
+    /// [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
+    /// [`claim`](Self::claim) on this `Fallback` and not yet returned.
     pub unsafe fn put(&mut self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
@@ -628,10 +580,10 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        // SAFETY: `value` was produced by `heap::into_raw(Box::<T>::new_uninit())`
-        // in `get_impl`/`get_and_see_if_new`/`try_get` above (it is not in the
-        // hive), and the caller has since fully initialized it. `destroy`
-        // reconstructs the `Box<T>` and runs `T::drop`.
+        // SAFETY: `value` was produced by the heap-spill path in `claim()`
+        // (it is not in the inline hive) and the caller has since fully
+        // initialized it. `destroy` reconstructs the `Box<T>` and runs
+        // `T::drop`.
         unsafe { bun_core::heap::destroy(value) };
     }
 }

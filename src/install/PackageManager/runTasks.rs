@@ -47,11 +47,11 @@ use crate::isolated_install::store as Store;
 // and branches on `@TypeOf(callbacks.onExtract) != void`, `Ctx == *PackageInstaller`,
 // etc. Rust models this as a single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
-// the `Ctx` identity checks. Phase B should revisit whether the call sites can
+// the `Ctx` identity checks. TODO(refactor): revisit whether the call sites can
 // be split into 2–3 concrete impls instead of const-gated branches.
 //
 // TODO(port): callbacks trait — comptime duck-typing reshape; verify against
-// the three call sites (`PackageInstaller`, `Store.Installer`, void) in Phase B.
+// the three call sites (`PackageInstaller`, `Store.Installer`, void).
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;
@@ -931,7 +931,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         // Zig: `defer manager.preallocated_resolve_tasks.put(task);`
         // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
-        // Phase B: have the iterator yield a pool guard that puts back on Drop.
+        // TODO(refactor): have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         // The per-iteration scopeguards capture the function-scope provenance
@@ -1707,8 +1707,19 @@ pub fn drain_dependency_list(this: &mut PackageManager) {
     let _ = schedule_tasks(this);
 }
 
+// Vends an *uninitialized* slot; the callers placement-init it via
+// `NetworkTask::write_init(ptr, …)` (args differ per caller, so the init
+// cannot be hoisted here). This is the one remaining "uninit pointer across a
+// boundary" site — TODO(refactor): have callers go through a typed token /
+// index instead. Built from the safe `claim()` primitive: `forget` the
+// `HiveSlot` token so its `Drop` does not recycle the slot — it stays claimed
+// and is returned to the pool later via the existing `NetworkTask` `put` path,
+// exactly as before.
 pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    this.preallocated_network_tasks.get()
+    let slot = this.preallocated_network_tasks.claim();
+    let ptr = slot.addr().as_ptr();
+    core::mem::forget(slot);
+    ptr
 }
 
 pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u8> {
@@ -1869,8 +1880,8 @@ pub fn generate_network_task_for_tarball<'a>(
         // every other `this` field these calls touch (resolve-task pool,
         // allocator, options) and the network-task pool is never reallocated
         // or `put()` here, so we reborrow `*net_ptr` per-statement alongside
-        // `this`. Phase B: have `get_network_task` return a pool index so this
-        // intrusive-pointer pattern goes away.
+        // `this`. TODO(refactor): have `get_network_task` return a pool index
+        // so this intrusive-pointer pattern goes away.
         // SAFETY: see disjointness note above.
         let tarball_ref = unsafe {
             let NetworkTaskCallback::Extract(t) = &(*net_ptr).callback else {

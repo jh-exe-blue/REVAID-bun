@@ -22,7 +22,7 @@ use enum_map::EnumMap;
 /// arena) or duped into the renamer's `bumpalo::Bump` arena. `StoreStr` is the
 /// arena-backed lifetime-erased slice wrapper that centralises the raw deref
 /// (one `unsafe` in `StoreStr::slice`), so the renamer's name-table reads stay
-/// safe. Phase B may later thread `'bump` and rewrite to `&'bump [u8]`.
+/// safe. TODO(refactor): could thread `'bump` and rewrite to `&'bump [u8]`.
 type NameStr = bun_ast::StoreStr;
 
 #[inline]
@@ -686,20 +686,19 @@ impl NumberRenamer {
         parent: Option<bun_ptr::ParentRef<NumberScope>>,
         sorted: &mut Vec<u32>,
     ) {
-        let s: *mut NumberScope = self.number_scope_pool.get();
-        // SAFETY: `s` is a valid pool slot (HiveArrayFallback::get never returns null).
-        unsafe {
-            s.write(NumberScope {
+        let s: *mut NumberScope = self
+            .number_scope_pool
+            .get_init(NumberScope {
                 parent,
                 name_counts: StringHashMap::default(),
-            });
-        }
+            })
+            .as_ptr();
 
         self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
 
         // PORT NOTE: Zig `defer { s.deinit(); pool.put(s) }` — fn is infallible,
         // so no scopeguard needed; cleanup runs unconditionally below.
-        // SAFETY: s came from number_scope_pool.get() and was initialized above;
+        // SAFETY: s came from number_scope_pool.get_init() (fully initialized);
         // `put` drops `name_counts` in place before recycling the slot.
         unsafe { self.number_scope_pool.put(s) };
     }
@@ -750,19 +749,18 @@ impl NumberRenamer {
 
         loop {
             if scope.members.count() > 0 || scope.generated.len_u32() > 0 {
-                let new_child_scope: *mut NumberScope = self.number_scope_pool.get();
-                // SAFETY: `new_child_scope` is a valid pool slot.
-                unsafe {
-                    new_child_scope.write(NumberScope {
-                        // `s` is non-null (either `initial_scope` or a fresh
-                        // pool slot from a prior iteration); the new child
-                        // outlives this `ParentRef` only until `put()` below.
+                // `s` is non-null (either `initial_scope` or a fresh pool slot
+                // from a prior iteration); the new child outlives this
+                // `ParentRef` only until `put()` below.
+                let new_child_scope: *mut NumberScope = self
+                    .number_scope_pool
+                    .get_init(NumberScope {
                         parent: Some(bun_ptr::ParentRef::from(
                             core::ptr::NonNull::new(s).expect("number_scope non-null"),
                         )),
                         name_counts: StringHashMap::default(),
-                    });
-                }
+                    })
+                    .as_ptr();
                 s = new_child_scope;
 
                 // SAFETY: s is a valid pool slot just initialized above
@@ -797,8 +795,8 @@ impl NumberRenamer {
             let parent = unsafe { (*s).parent }
                 .map(|p| p.as_mut_ptr())
                 .unwrap_or(initial_scope);
-            // SAFETY: `s` came from `number_scope_pool.get()` in the loop above
-            // and was fully initialized; `put` drops `name_counts` in place
+            // SAFETY: `s` came from `number_scope_pool.get_init()` in the loop
+            // above (fully initialized); `put` drops `name_counts` in place
             // before recycling/freeing the slot.
             unsafe { self.number_scope_pool.put(s) };
             s = parent;
