@@ -87,10 +87,9 @@ pub struct NetworkTask {
     pub tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // PORT NOTE: `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
-    pub streaming_extract_task: *mut Task<'static>,
+    /// Pool slot borrowed from `PreallocatedTaskStore` and returned to it
+    /// (`discard_unused_streaming_state`).
+    pub streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by

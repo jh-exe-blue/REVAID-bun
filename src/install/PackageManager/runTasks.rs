@@ -962,13 +962,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                // PORT NOTE: capture the `*mut NetworkTask` up front — the
-                // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
-                let net_ptr: *mut NetworkTask = {
-                    let req = task.request_package_manifest_mut();
-                    &raw mut *req.network
-                };
+                // Capture the pool-slot pointer up front so the `defer!` body
+                // doesn't need to project through the union.
+                let net_ptr: *mut NetworkTask = task.request_package_manifest().network.as_ptr();
                 scopeguard::defer! {
                     // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
                     // function-scope provenance root; `net_ptr` is the network task
@@ -993,8 +989,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             extract_ctx,
                             name,
                             err,
-                            // SAFETY: same active-arm read as `req` above.
-                            unsafe { &(*req.network).url_buf },
+                            // SAFETY: same active-arm read as `req` above;
+                            // `network` is a live pool slot (see `defer!`).
+                            unsafe { &req.network.as_ref().url_buf },
                         );
                     } else {
                         bun_ast::add_error_pretty!(
@@ -1043,12 +1040,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
-                // through `ManuallyDrop`'s immutable `Deref`.
+                // Capture the pool-slot pointer up front (only for the Extract
+                // arm) so the `defer!` body doesn't need to project through the union.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
-                    let req = task.request_extract_mut();
-                    &raw mut *req.network
+                    task.request_extract().network.as_ptr()
                 } else {
                     core::ptr::null_mut()
                 };
@@ -1097,7 +1092,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // SAFETY: `task.tag` selects the active union arm.
                         let fail_url: &[u8] = match task.tag {
                             Task::Tag::Extract => unsafe {
-                                &(*task.request.extract.network).url_buf
+                                &task.request.extract.network.as_ref().url_buf
                             },
                             Task::Tag::LocalTarball => unsafe {
                                 task.request.local_tarball.tarball.url.slice()
