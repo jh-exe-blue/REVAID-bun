@@ -75,7 +75,7 @@ const _: () = {
     }
 };
 
-/// R-2 (`sharedThis`): every JS-facing host-fn takes `&Request` (not
+/// `sharedThis`: every JS-facing host-fn takes `&Request` (not
 /// `&mut Request`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields mutated by host-fns are wrapped in `Cell` (Copy scalars)
 /// or `JsCell` (Drop types). Both are `#[repr(transparent)]`, so `#[repr(C)]`
@@ -218,7 +218,7 @@ impl Request {
     /// route through here so the `NonNull::as_ptr()` deref is audited in one
     /// place.
     ///
-    /// R-2: takes `&self` and projects `&mut` through the raw `NonNull`
+    /// Takes `&self` and projects `&mut` through the raw `NonNull`
     /// (the hive slot is a separate heap allocation; not covered by `&self`'s
     /// `noalias`). Single-JS-thread invariant — keep the borrow short.
     #[inline]
@@ -228,7 +228,7 @@ impl Request {
         // slot is live until `finalize()` (or the JS wrapper's GC finalizer)
         // calls `unref()`. `Request` is `!Sync` so no concurrent `&mut` exists.
         // The slot is a separate hive allocation (not `*self`), so the returned
-        // `&mut` does not alias `&Request`. R-2: the aliasing
+        // `&mut` does not alias `&Request`. The aliasing
         // `RequestContext.request_body` pointer is only dereferenced while no
         // other `&mut BodyValue` is live (single-threaded event-loop sequencing).
         unsafe { &mut *self.body.as_ptr() }
@@ -240,14 +240,14 @@ impl Request {
         &self.body_hive().value
     }
 
-    /// Zig: `&this.#body.value`. See [`body_hive`] for the R-2 invariant.
+    /// Zig: `&this.#body.value`. See [`body_hive`] for the noalias re-entry invariant.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn body_value_mut(&self) -> &mut BodyValue {
         &mut self.body_hive().value
     }
 
-    /// R-2: short-hand for `unsafe { self.headers.get_mut() }`. The
+    /// Short-hand for `unsafe { self.headers.get_mut() }`. The
     /// single-JS-thread invariant (see `JsCell` docs) means no other
     /// `&mut Option<HeadersRef>` is live for the duration of the borrow.
     #[inline]
@@ -541,7 +541,7 @@ impl Request {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
-        // R-2: `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
+        // `to_js_unchecked` stores `self` as the C++ `m_ctx` payload (an
         // opaque `void*` never deref'd as `&mut Request` on the C++ side), so
         // forming `*mut` from `&self` here is provenance-safe.
         let js_value = js_gen::to_js_unchecked(
