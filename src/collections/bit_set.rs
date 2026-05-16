@@ -1898,20 +1898,14 @@ mod tests {
     // Phase B trait extraction.
 
     #[allow(dead_code)]
-    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
+    fn fill_even<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize) {
         for i in 0..len {
             set.set_value(i, i & 1 == 0);
         }
     }
 
     #[allow(dead_code)]
-    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize)
-    where
-        [(); num_masks_for(SIZE)]:,
-    {
+    fn fill_odd<const SIZE: usize, const M: usize>(set: &mut ArrayBitSet<SIZE, M>, len: usize) {
         for i in 0..len {
             set.set_value(i, i & 1 == 1);
         }

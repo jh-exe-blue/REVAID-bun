@@ -721,6 +721,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ))
                 .as_ptr()
         };
+        bun_output::scoped_log!(server_body::RequestContext, "create<d> ({:p})<r>", ctx);
         let ctx_mut = unsafe { &mut *ctx };
 
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM

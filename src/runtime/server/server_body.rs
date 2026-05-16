@@ -3149,6 +3149,7 @@ where
                 ))
                 .as_ptr()
         };
+        ctx_log!("create<d> ({:p})<r>", ctx_slot);
         // SAFETY: `ctx_slot` points at the freshly initialized pool slot.
         let ctx = unsafe { &mut *ctx_slot };
         // `VirtualMachine::jsc_vm()` is the safe accessor for the JSC VM
@@ -3412,6 +3413,7 @@ where
                 ))
                 .as_ptr()
         };
+        ctx_log!("create<d> ({:p})<r>", ctx);
 
         let body_hive = crate::webcore::body::hive_alloc(this.vm().as_mut(), BodyValue::Null);
         // SAFETY: hive_alloc returns a freshly-initialized hive slot; live until

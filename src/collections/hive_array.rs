@@ -305,9 +305,11 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     ///
     /// # Safety
     /// If `value` points into this hive, it must point to a fully-initialized
-    /// `T` previously obtained via [`get`](Self::get) and written by the
-    /// caller. The slot is dropped in place; passing a moved-from or
-    /// uninitialized slot is UB for `T` with drop glue.
+    /// `T` previously obtained via [`get_init`](Self::get_init) /
+    /// [`emplace`](Self::emplace), or via [`claim`](Self::claim) followed by
+    /// [`HiveSlot::write`] / [`HiveSlot::assume_init`]. The slot is dropped in
+    /// place; passing a moved-from or uninitialized slot is UB for `T` with
+    /// drop glue.
     pub unsafe fn put(&mut self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
@@ -338,7 +340,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
 /// Linear reservation token for a claimed-but-uninitialized hive slot.
 ///
-/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. The legacy [`HiveArray::get`]
+/// `HiveArray` slots are `[MaybeUninit<T>; CAP]`. The legacy `get()`
 /// contract was two-phase — claim a `*mut T` to garbage, then `ptr::write` it
 /// — which opened three UB hazards in the gap: (H1) early-return / `?` / panic
 /// leaves the slot claimed-uninit so a later `put()` drops garbage; (H2)
@@ -539,20 +541,19 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must have been obtained from this `Fallback` (via `get_init` /
-    /// `emplace` / `claim().write()` / the deprecated `get` family) and not
-    /// yet returned. The contained `T` is **not** dropped — caller must have
-    /// already moved out / destructured anything with drop glue, or `T` must
-    /// be POD.
+    /// `emplace` / `claim().write()`) and not yet returned. The contained `T`
+    /// is **not** dropped — caller must have already moved out / destructured
+    /// anything with drop glue, or `T` must be POD.
     pub unsafe fn put_raw(&mut self, value: *mut T) {
         if CAPACITY > 0 {
             if self.hive.put_raw(value) {
                 return;
             }
         }
-        // SAFETY: caller contract — `value` is a heap slot from `claim()` /
-        // `get()`; it was allocated as `Box<MaybeUninit<T>>` (same layout as
-        // `Box<T>`). Reclaiming as `MaybeUninit<T>` deallocates without
-        // running `T::drop`.
+        // SAFETY: caller contract — `value` is a heap slot from `claim()`; it
+        // was allocated as `Box<MaybeUninit<T>>` (same layout as `Box<T>`).
+        // Reclaiming as `MaybeUninit<T>` deallocates without running
+        // `T::drop`.
         drop(unsafe { Box::from_raw(value.cast::<MaybeUninit<T>>()) });
     }
 
@@ -570,8 +571,11 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must point to a fully-initialized `T` previously obtained from
-    /// [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
-    /// [`claim`](Self::claim) on this `Fallback` and not yet returned.
+    /// [`get_init`](Self::get_init), [`emplace`](Self::emplace), or from
+    /// [`claim`](Self::claim) after consuming the [`HiveSlot`] via
+    /// [`HiveSlot::write`] / [`HiveSlot::assume_init`], on this `Fallback`
+    /// and not yet returned. A claimed-but-uninitialized slot must not be
+    /// passed here.
     pub unsafe fn put(&mut self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
@@ -661,7 +665,6 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -676,36 +679,32 @@ mod tests {
         let mut a = HiveArray::<Int, SIZE>::init();
 
         {
-            let b = a.get().unwrap();
-            // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *b = 0 };
-            assert!(a.get().unwrap() != b);
+            let b = a.get_init(0).unwrap().as_ptr();
+            assert!(a.get_init(0).unwrap().as_ptr() != b);
             assert_eq!(a.index_of(b), Some(0));
             // SAFETY: `b` is a fully-initialized hive slot.
             assert!(unsafe { a.put(b) });
-            assert!(a.get().unwrap() == b);
-            let c = a.get().unwrap();
-            // SAFETY: `c` points into `a.buffer` and was just unpoisoned by `get()`.
-            unsafe { *c = 123 };
+            assert!(a.get_init(0).unwrap().as_ptr() == b);
+            let _c = a.get_init(123).unwrap().as_ptr();
             let mut d: Int = 12345;
             // SAFETY: `&mut d` is foreign — `put` returns `false` and drops nothing.
             assert!(unsafe { a.put(&mut d) } == false);
             assert!(a.r#in(&d) == false);
         }
 
-        a.used = IntegerBitSet::init_empty();
+        // `Int` has no drop glue, so resetting the bitset directly is a safe
+        // way to release every slot at once without `put`-ing them one by one.
+        a.used = HiveBitSet::init_empty();
         {
             for i in 0..SIZE {
-                let b = a.get().unwrap();
-                // SAFETY: `b` points into `a.buffer` and was just unpoisoned by `get()`.
-                unsafe { *b = 0 };
+                let b = a.get_init(0).unwrap().as_ptr();
                 assert_eq!(a.index_of(b), Some(u32::try_from(i).expect("int cast")));
                 // SAFETY: `b` is a fully-initialized hive slot.
                 assert!(unsafe { a.put(b) });
-                assert!(a.get().unwrap() == b);
+                assert!(a.get_init(0).unwrap().as_ptr() == b);
             }
             for _ in 0..SIZE {
-                assert!(a.get().is_none());
+                assert!(a.claim().is_none());
             }
         }
     }
