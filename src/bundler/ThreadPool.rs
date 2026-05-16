@@ -205,10 +205,12 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    // PORT NOTE: generic over `V2`. The backref is stored as a type-erased raw
-    // pointer (`.cast()`), so the monomorphised body is identical regardless of
-    // the caller's `BundleV2` type. Collapses to `&BundleV2<'_>` once
-    // `bundle_v2::bv2_impl` is dropped.
+    // PORT NOTE: generic over `V2` because, during the phased port,
+    // `bundle_v2.rs` carried a second `BundleV2` definition inside the gated
+    // `bv2_impl` draft module and both called `ThreadPool::init`. The backref
+    // is stored as a type-erased raw pointer (`.cast()`) regardless, so the
+    // monomorphised body is identical. Collapses to `&BundleV2<'_>` once
+    // `bv2_impl` is dropped.
     pub fn init<V2>(
         v2: &V2,
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
@@ -640,7 +642,8 @@ impl Worker {
             // PORT NOTE: `MimallocArena::help_catch_memory_issues` collected
             // mimalloc's deferred frees + zero-filled freed pages. The Rust
             // arena is `bumpalo::Bump`, which has no equivalent — calls
-            // dropped, gated on the real `MimallocArena` un-gate.
+            // dropped, gated on the real `MimallocArena` un-gate
+            // (`bun_alloc/MimallocArena.rs` is ``).
         }
 
         worker
