@@ -4675,9 +4675,7 @@ fn open_extract_dir(abs_buf: &mut [u8]) -> Option<ExtractDir<'_>> {
     let mut name_buf = [0u8; 96];
 
     // Try canonical + up to 8 random fallbacks. Each attempt overwrites
-    // `abs_buf`; on failure we just loop and try another name. Use a raw
-    // pointer dance so the borrow checker doesn't conflate the fresh
-    // borrow on each iteration with prior ones.
+    // `abs_buf`; on failure we just loop and try another name.
     for attempt in 0..9 {
         let subdir_len = {
             use core::fmt::Write as _;
@@ -4694,8 +4692,6 @@ fn open_extract_dir(abs_buf: &mut [u8]) -> Option<ExtractDir<'_>> {
                 Some(ok) => ok,
                 None => continue,
             };
-        // SAFETY: `abs_buf[..abs_z_len]` was written inside
-        // `try_open_extract_dir`; re-borrow for the caller's lifetime.
         let path: &[u8] = &abs_buf[..abs_z_len];
         return Some(ExtractDir { fd, path });
     }
@@ -4819,9 +4815,6 @@ impl<'a> NameBuf<'a> {
         self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
         self.len += bytes.len();
         Some(())
-    }
-    fn written(&self) -> &[u8] {
-        &self.buf[..self.len]
     }
 }
 
