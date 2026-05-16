@@ -1315,7 +1315,8 @@ impl CreateCommand {
                                             script_property_i += 1;
                                             continue;
                                         };
-                                        let Some(script_value) = script_value.data.e_string() else {
+                                        let Some(script_value) = script_value.data.e_string()
+                                        else {
                                             scripts_properties
                                                 .swap(script_property_out_i, script_property_i);
                                             script_property_out_i += 1;

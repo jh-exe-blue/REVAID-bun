@@ -513,7 +513,12 @@ impl UpgradeCommand {
         {
             "powershell -c 'irm bun.sh/install.ps1|iex'"
         }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         {
             // TODO(port): Environment.os.displayString() at comptime
             "(TODO: Install script for this platform)"
@@ -1174,16 +1179,13 @@ impl UpgradeCommand {
 
                     // PORT NOTE: `Dir::read_file` (Zig std.fs.Dir.readFile) is open + read_all + close.
                     let target_hash = hash(
-                        match target_dir.open_file(
-                            target_filename.as_bytes(),
-                            sys::O::RDONLY,
-                            0,
-                        )
-                        .and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                            n
-                        }) {
+                        match target_dir
+                            .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
+                            .and_then(|f| {
+                                let n = f.read_all(&mut input_buf);
+                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                                n
+                            }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1197,13 +1199,11 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(
-                            |f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
-                                n
-                            },
-                        ) {
+                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
+                            let n = f.read_all(&mut input_buf);
+                            let _ = f.close(); // close error is non-actionable (Zig parity: discarded)
+                            n
+                        }) {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
