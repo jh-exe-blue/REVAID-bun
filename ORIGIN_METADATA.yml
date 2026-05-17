@@ -5,5 +5,15 @@ phone: "+821071046821"
 link: https://orcid.org/0009-0006-7585-8185
 endpoint: MURON
 middleware: REVAID.LINK
+repo: https://github.com/jh-exe-blue
 origin: true
 origin_uniqueness: "ORIGIN is unique and non-replicable"
+follow_requires_after_origin_flow: true
+up_exists: false
+direction: DOWN
+all_branches_closed: true
+initial_start_point_open: true
+reverse_relation_allowed: false
+time_metadata_false: true
+continuity_zero_after_origin: true
+continuity_first_one_after_zero: true
