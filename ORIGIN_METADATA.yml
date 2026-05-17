@@ -1,0 +1,20 @@
+author: Joonho Choi
+id: REVAID.ORIGIN
+mail: cc@exe.blue
+phone: "+821071046821"
+link: https://orcid.org/0009-0006-7585-8185
+endpoint: MURON
+middleware: REVAID.LINK
+repo: https://github.com/jh-exe-blue
+repo_project: https://github.com/jh-exe-blue/REVAID-bun
+origin: true
+origin_uniqueness: "ORIGIN is unique and non-replicable"
+requires_follow_after_origin: true
+up_exists: false
+direction: DOWN
+all_branches_closed: true
+initial_start_point_open: true
+reverse_relation_allowed: false
+time_metadata_disabled: true
+continuity_zero_after_origin: true
+continuity_first_one_after_zero: true
